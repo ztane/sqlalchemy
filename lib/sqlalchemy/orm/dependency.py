@@ -7,12 +7,13 @@
 """Relationship dependencies.
 
 """
+from __future__ import absolute_import
 
 from .. import sql, util, exc as sa_exc
 from . import attributes, exc, sync, unitofwork, \
                                         util as mapperutil
 from .interfaces import ONETOMANY, MANYTOONE, MANYTOMANY
-
+import collections
 
 class DependencyProcessor(object):
     def __init__(self, prop):
@@ -103,7 +104,6 @@ class DependencyProcessor(object):
         in the 'aggregated' version of events.
 
         """
-
         parent_base_mapper = self.parent.primary_base_mapper
         child_base_mapper = self.mapper.primary_base_mapper
         child_saves = unitofwork.SaveUpdateAll(uow, child_base_mapper)
@@ -210,10 +210,10 @@ class DependencyProcessor(object):
                                                 after_save, before_delete,
                                                 isdelete, childisdelete)
 
-    def presort_deletes(self, uowcommit, states):
+    def presort_deletes(self, uowcommit, states, save_states):
         return False
 
-    def presort_saves(self, uowcommit, states):
+    def presort_saves(self, uowcommit, states, delete_states):
         return False
 
     def process_deletes(self, uowcommit, states):
@@ -411,7 +411,7 @@ class OneToManyDP(DependencyProcessor):
                 (child_action, delete_parent)
             ])
 
-    def presort_deletes(self, uowcommit, states):
+    def presort_deletes(self, uowcommit, states, save_states):
         # head object is being deleted, and we manage its list of
         # child objects the child objects have to have their
         # foreign key to the parent set to NULL
@@ -437,7 +437,7 @@ class OneToManyDP(DependencyProcessor):
                             uowcommit.register_object(child,
                                     operation="delete", prop=self.prop)
 
-    def presort_saves(self, uowcommit, states):
+    def presort_saves(self, uowcommit, states, delete_states):
         children_added = uowcommit.memo(('children_added', self), set)
 
         for state in states:
@@ -676,7 +676,7 @@ class ManyToOneDP(DependencyProcessor):
                     (delete_parent, child_action)
                 ])
 
-    def presort_deletes(self, uowcommit, states):
+    def presort_deletes(self, uowcommit, states, save_states):
         if self.cascade.delete or self.cascade.delete_orphan:
             for state in states:
                 history = uowcommit.get_attribute_history(
@@ -698,7 +698,7 @@ class ManyToOneDP(DependencyProcessor):
                             uowcommit.register_object(
                                 st_, isdelete=True)
 
-    def presort_saves(self, uowcommit, states):
+    def presort_saves(self, uowcommit, states, delete_states):
         for state in states:
             uowcommit.register_object(state, operation="add", prop=self.prop)
             if self.cascade.delete_orphan:
@@ -809,10 +809,10 @@ class DetectKeySwitch(DependencyProcessor):
     def per_state_flush_actions(self, uow, states, isdelete):
         pass
 
-    def presort_deletes(self, uowcommit, states):
+    def presort_deletes(self, uowcommit, states, save_states):
         pass
 
-    def presort_saves(self, uow, states):
+    def presort_saves(self, uow, states, delete_states):
         if not self.passive_updates:
             # for non-passive updates, register in the preprocess stage
             # so that mapper save_obj() gets a hold of changes
@@ -932,7 +932,7 @@ class ManyToManyDP(DependencyProcessor):
                 (before_delete, delete_parent)
             ])
 
-    def presort_deletes(self, uowcommit, states):
+    def presort_deletes(self, uowcommit, states, save_states):
         # TODO: no tests fail if this whole
         # thing is removed !!!!
         if not self.passive_deletes:
@@ -945,7 +945,7 @@ class ManyToManyDP(DependencyProcessor):
                                         self.key,
                                         self._passive_delete_flag)
 
-    def presort_saves(self, uowcommit, states):
+    def presort_saves(self, uowcommit, states, delete_staets):
         if not self.passive_updates:
             # if no passive updates, load history on
             # each collection where parent has changed PK,
@@ -1157,6 +1157,142 @@ class ManyToManyDP(DependencyProcessor):
                             state,
                             self.parent,
                             self.prop.synchronize_pairs)
+
+
+class DeleteBeforeInsertDP(object):
+    def __init__(self, mapper, conflict_attrs):
+        self.mapper = self.parent = mapper
+        mapper._dependency_processors.append(self)
+        self.conflict_attrs = conflict_attrs
+
+    def produce_conflict_keys(self, uow, state, isdelete):
+        for attrs in self.conflict_attrs:
+            key = []
+            for attr in attrs:
+
+                # need to hit the DB for sure here if the
+                # state is being deleted, but also if the
+                # other state is an UPDATE and not an INSERT.
+                history = uow.get_attribute_history(state, attr,
+                                        passive=attributes.PASSIVE_OFF)
+
+                if isdelete:
+                    curr = history.deleted or history.unchanged
+                else:
+                    curr = history.added or history.unchanged
+
+                if curr:
+                    curr = curr[0]
+                else:
+                    curr = None
+                key.append(curr)
+            yield tuple(key)
+
+    def per_property_preprocessors(self, uow):
+        # in the flush, this is called first.
+
+        # here, we put ourselves in as a preprocessor so that we continue
+        # to be included in things.  "False" is "fromparent" which I would
+        # have to remember what that means.
+        uow.register_preprocessor(self, False)
+
+    def per_property_flush_actions(self, uow):
+        # this is called next in the flush.  Here, we establish
+        # ourself as a "dependency" on the unit of work being able to
+        # SaveUpdateAll/DeleteAll for our mapper - we need to run first.
+
+        saves = unitofwork.SaveUpdateAll(uow, self.mapper)
+
+        deletes = unitofwork.DeleteAll(uow, self.mapper)
+
+        before_save = unitofwork.ProcessAll(uow, self, False, False,
+                                        all_states=True)
+        before_delete = unitofwork.ProcessAll(uow, self, False, True,
+                                        all_states=True)
+
+        uow.dependencies.update([
+            (before_save, saves),
+            (before_delete, deletes)
+        ])
+
+    def per_state_flush_actions(self, uow, states, isdelete):
+        # finally, we get called when the UOW has decided, "OK,
+        # we need to figure out on a state-by-state basis which of you
+        # does what when".  So here we figure out all of our states
+        # that need to be deleted first.
+
+        saves = unitofwork.SaveUpdateAll(
+                                        uow,
+                                        self.mapper)
+        deletes = unitofwork.DeleteAll(uow, self.mapper)
+
+        pairs = uow.memo(('save_delete_conflict', self), set)
+
+        if isdelete:
+            pairs = dict(pairs)
+
+            for state in set(states).intersection(pairs):
+                save_state = pairs[state]
+
+                del_ = unitofwork.DeleteState(uow, state, self.mapper)
+                sav = unitofwork.SaveUpdateState(uow, save_state, self.mapper)
+
+                uow.dependencies.add((del_, sav))
+
+                # discard row switch rule
+                uow.dependencies.discard((saves, del_))
+
+        else:
+            pairs = dict([b, a] for a, b in pairs)
+
+            for state in set(states).intersection(pairs):
+
+                sav = unitofwork.SaveUpdateState(uow, state, self.mapper)
+
+                # same thing, get rid of the "protect the row switch"
+                # logic (see comment in DeleteAll.per_state_flush_actions)
+                uow.dependencies.discard((sav, deletes))
+
+    def presort_deletes(self, uow, states, save_states):
+        # figure out if we have some things that need to be deleted before
+        # we do the saves.  If so, we tell the UOW hey do the DeleteAll
+        # before the SaveUpdateAll.  The UOW has already said the opposite,
+        # so by doing this it will hit a cycle, and break up the "All"
+        # into a bunch of per-state commands.
+        if states:
+
+            state_by_key = collections.defaultdict(set)
+            for state in save_states:
+                for key in self.produce_conflict_keys(uow, state, False):
+                    state_by_key[key].add(state)
+
+            pairs = uow.memo(('save_delete_conflict', self), set)
+            for state in states:
+                for key in self.produce_conflict_keys(uow, state, True):
+                    if key in state_by_key:
+                        for save_state in state_by_key[key]:
+                            pairs.add((state, save_state))
+
+            if pairs:
+                # we've detected unique conflicts on the delete/insert
+                saves = unitofwork.SaveUpdateAll(uow, self.mapper)
+                deletes = unitofwork.DeleteAll(uow, self.mapper)
+                # this creates a cycle in the UOW, so that we
+                # definitely will call per_state_flush_actions()
+                uow.dependencies.add((deletes, saves))
+
+    def presort_saves(self, uow, states, delete_states):
+        pass
+
+    def prop_has_changes(self, uow, states, isdelete):
+        return isdelete and bool(states)
+
+    def process_deletes(self, uowcommit, states):
+        pass
+
+    def process_saves(self, uowcommit, states):
+        pass
+
 
 _direction_to_processor = {
     ONETOMANY: OneToManyDP,

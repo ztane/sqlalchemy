@@ -256,6 +256,7 @@ class UOWTransaction(object):
     def _per_mapper_flush_actions(self, mapper):
         saves = SaveUpdateAll(self, mapper.base_mapper)
         deletes = DeleteAll(self, mapper.base_mapper)
+
         self.dependencies.add((saves, deletes))
 
         for dep in mapper._dependency_processors:
@@ -422,10 +423,10 @@ class Preprocess(IterateMappersMixin):
                         save_states.add(state)
 
         if delete_states:
-            self.dependency_processor.presort_deletes(uow, delete_states)
+            self.dependency_processor.presort_deletes(uow, delete_states, save_states)
             self.processed.update(delete_states)
         if save_states:
-            self.dependency_processor.presort_saves(uow, save_states)
+            self.dependency_processor.presort_saves(uow, save_states, delete_states)
             self.processed.update(save_states)
 
         if (delete_states or save_states):
@@ -445,7 +446,7 @@ class Preprocess(IterateMappersMixin):
 class PostSortRec(object):
     disabled = False
 
-    def __new__(cls, uow, *args):
+    def __new__(cls, uow, *args, **kw):
         key = (cls, ) + args
         if key in uow.postsort_actions:
             return uow.postsort_actions[key]
@@ -466,12 +467,18 @@ class PostSortRec(object):
 
 
 class ProcessAll(IterateMappersMixin, PostSortRec):
-    def __init__(self, uow, dependency_processor, delete, fromparent):
+    def __init__(self, uow, dependency_processor, delete, fromparent,
+                            all_states=False):
         self.dependency_processor = dependency_processor
         self.delete = delete
         self.fromparent = fromparent
         uow.deps[dependency_processor.parent.base_mapper].\
                     add(dependency_processor)
+        if all_states:
+            uow._mapper_for_dep[(
+                        dependency_processor.mapper,
+                        dependency_processor)] = True
+
 
     def execute(self, uow):
         states = self._elements(uow)

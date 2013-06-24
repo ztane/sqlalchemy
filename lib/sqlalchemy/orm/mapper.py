@@ -23,7 +23,7 @@ from collections import deque
 from .. import sql, util, log, exc as sa_exc, event, schema, inspection
 from ..sql import expression, visitors, operators, util as sql_util
 from . import instrumentation, attributes, \
-                        exc as orm_exc, events, loading
+                        exc as orm_exc, events, loading, dependency
 from .interfaces import MapperProperty, _InspectionAttr, _MappedAttribute
 
 from .util import _INSTRUMENTOR, _class_to_mapper, \
@@ -114,6 +114,7 @@ class Mapper(_InspectionAttr):
                  exclude_properties=None,
                  passive_updates=True,
                  eager_defaults=False,
+                 maintain_unique_attributes=None,
                  legacy_is_orphan=False,
                  _compiled_cache_size=100,
                  ):
@@ -164,6 +165,11 @@ class Mapper(_InspectionAttr):
         self._compiled_cache_size = _compiled_cache_size
         self._reconstructor = None
         self._deprecated_extensions = util.to_list(extension or [])
+
+        if maintain_unique_attributes:
+            self._dependency_processors.append(
+                dependency.DeleteBeforeInsertDP(self, maintain_unique_attributes)
+            )
 
         self.allow_partial_pks = allow_partial_pks
 
