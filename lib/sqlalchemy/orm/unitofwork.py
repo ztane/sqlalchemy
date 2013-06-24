@@ -12,9 +12,9 @@ organizes them in order of dependency, and executes.
 
 """
 
-from .. import util, event
+from .. import util, event, exc
 from ..util import topological
-from . import attributes, persistence, util as orm_util
+from . import attributes, persistence, util as orm_util, exc as orm_exc
 
 sessionlib = util.importlater("sqlalchemy.orm", "session")
 
@@ -360,12 +360,19 @@ class UOWTransaction(object):
 
         # execute
         if self.cycles:
-            for set_ in topological.sort_as_subsets(
-                                            self.dependencies,
-                                            postsort_actions):
-                while set_:
-                    n = set_.pop()
-                    n.execute_aggregate(self, set_)
+            try:
+                for set_ in topological.sort_as_subsets(
+                                                self.dependencies,
+                                                postsort_actions):
+                    while set_:
+                        n = set_.pop()
+                        n.execute_aggregate(self, set_)
+            except exc.CircularDependencyError as cde:
+                raise orm_exc.FlushError(
+                        "Unresolvable cycle(s) in flush process, "
+                        "involving entities: %s" %
+                        ", ".join(str(e) for e in cde.cycles)
+                    )
         else:
             for rec in topological.sort(
                                     self.dependencies,
@@ -599,11 +606,10 @@ class ProcessState(PostSortRec):
             dependency_processor.process_saves(uow, states)
 
     def __repr__(self):
-        return "%s(%s, %s, delete=%s)" % (
-            self.__class__.__name__,
+        return "process %s relationship of %s for %s" % (
             self.dependency_processor,
             orm_util.state_str(self.state),
-            self.delete
+            "delete" if self.delete else "save"
         )
 
 
@@ -625,8 +631,7 @@ class SaveUpdateState(PostSortRec):
                         uow)
 
     def __repr__(self):
-        return "%s(%s)" % (
-            self.__class__.__name__,
+        return "save instance %s" % (
             orm_util.state_str(self.state)
         )
 
@@ -649,7 +654,6 @@ class DeleteState(PostSortRec):
                         uow)
 
     def __repr__(self):
-        return "%s(%s)" % (
-            self.__class__.__name__,
+        return "delete instance %s" % (
             orm_util.state_str(self.state)
         )
