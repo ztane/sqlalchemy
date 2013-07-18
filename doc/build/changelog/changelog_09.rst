@@ -7,6 +7,247 @@
     :version: 0.9.0
 
     .. change::
+        :tags: bug, sql
+        :tickets: 2784
+
+        Fixed bug in :class:`.CheckConstraint` DDL where the "quote" flag from a
+        :class:`.Column` object would not be propagated.  Also in 0.8.3, 0.7.11.
+
+    .. change::
+        :tags: bug, orm
+        :tickets: 2778
+
+        A performance fix related to the usage of the :func:`.defer` option
+        when loading mapped entities.   The function overhead of applying
+        a per-object deferred callable to an instance at load time was
+        significantly higher than that of just loading the data from the row
+        (note that ``defer()`` is meant to reduce DB/network overhead, not
+        necessarily function call count); the function call overhead is now
+        less than that of loading data from the column in all cases.  There
+        is also a reduction in the number of "lazy callable" objects created
+        per load from N (total deferred values in the result) to 1 (total
+        number of deferred cols).  Also in 0.8.3.
+
+    .. change::
+        :tags: bug, sqlite
+        :tickets: 2781
+
+        The newly added SQLite DATETIME arguments storage_format and
+        regexp apparently were not fully implemented correctly; while the
+        arguments were accepted, in practice they would have no effect;
+        this has been fixed.  Also in 0.8.3.
+
+    .. change::
+        :tags: bug, sql, postgresql
+        :tickets: 2780
+
+        Fixed bug where the expression system relied upon the ``str()``
+        form of a some expressions when referring to the ``.c`` collection
+        on a ``select()`` construct, but the ``str()`` form isn't available
+        since the element relies on dialect-specific compilation constructs,
+        notably the ``__getitem__()`` operator as used with a Postgresql
+        ``ARRAY`` element.  The fix also adds a new exception class
+        :class:`.UnsupportedCompilationError` which is raised in those cases
+        where a compiler is asked to compile something it doesn't know
+        how to.  Also in 0.8.3.
+
+    .. change::
+        :tags: bug, engine, oracle
+        :tickets: 2776
+
+        Dialect.initialize() is not called a second time if an :class:`.Engine`
+        is recreated, due to a disconnect error.   This fixes a particular
+        issue in the Oracle 8 dialect, but in general the dialect.initialize()
+        phase should only be once per dialect.  Also in 0.8.3.
+
+    .. change::
+        :tags: feature, sql
+        :tickets: 722
+
+        Added new method to the :func:`.insert` construct
+        :meth:`.Insert.from_select`.  Given a list of columns and
+        a selectable, renders ``INSERT INTO (table) (columns) SELECT ..``.
+        While this feature is highlighted as part of 0.9 it is also
+        backported to 0.8.3.
+
+        .. seealso::
+
+            :ref:`feature_722`
+
+    .. change::
+        :tags: feature, sql
+
+        The :func:`.update`, :func:`.insert`, and :func:`.delete` constructs
+        will now interpret ORM entities as target tables to be operated upon,
+        e.g.::
+
+            from sqlalchemy import insert, update, delete
+
+            ins = insert(SomeMappedClass).values(x=5)
+
+            del_ = delete(SomeMappedClass).where(SomeMappedClass.id == 5)
+
+            upd = update(SomeMappedClass).where(SomeMappedClass.id == 5).values(name='ed')
+
+        Also in 0.8.3.
+
+    .. change::
+        :tags: bug, orm
+        :tickets: 2773
+
+        Fixed bug whereby attribute history functions would fail
+        when an object we moved from "persistent" to "pending"
+        using the :func:`.make_transient` function, for operations
+        involving collection-based backrefs.  Also in 0.8.3.
+
+    .. change::
+        :tags: bug, engine, pool
+        :tickets: 2772
+
+        Fixed bug where :class:`.QueuePool` would lose the correct
+        checked out count if an existing pooled connection failed to reconnect
+        after an invalidate or recycle event.  Also in 0.8.3.
+
+    .. change::
+        :tags: bug, mysql
+        :tickets: 2768
+
+        Fixed bug when using multi-table UPDATE where a supplemental
+        table is a SELECT with its own bound parameters, where the positioning
+        of the bound parameters would be reversed versus the statement
+        itself when using MySQL's special syntax.  Also in 0.8.2.
+
+    .. change::
+        :tags: bug, sqlite
+        :tickets: 2764
+
+        Added :class:`.BIGINT` to the list of type names that can be
+        reflected by the SQLite dialect; courtesy Russell Stuart.
+        Also in 0.8.2.
+
+    .. change::
+        :tags: feature, orm, declarative
+        :tickets: 2761
+
+        ORM descriptors such as hybrid properties can now be referenced
+        by name in a string argument used with ``order_by``,
+        ``primaryjoin``, or similar in :func:`.relationship`,
+        in addition to column-bound attributes.  Also in 0.8.2.
+
+    .. change::
+        :tags: feature, engine
+        :tickets: 2770
+
+        New events added to :class:`.ConnectionEvents`:
+
+        * :meth:`.ConnectionEvents.engine_connect`
+        * :meth:`.ConnectionEvents.set_connection_execution_options`
+        * :meth:`.ConnectionEvents.set_engine_execution_options`
+
+    .. change::
+        :tags: feature, firebird
+        :tickets: 2763
+
+        Added new flag ``retaining=False`` to the kinterbasdb and fdb dialects.
+        This controls the value of the ``retaining`` flag sent to the
+        ``commit()`` and ``rollback()`` methods of the DBAPI connection.
+        Defaults to False.  Also in 0.8.2, where it defaults to True.
+
+    .. change::
+        :tags: requirements
+
+        The Python `mock <https://pypi.python.org/pypi/mock>`_ library
+        is now required in order to run the unit test suite.  While part
+        of the standard library as of Python 3.3, previous Python installations
+        will need to install this in order to run unit tests or to
+        use the ``sqlalchemy.testing`` package for external dialects.
+        This applies to 0.8.2 as well.
+
+    .. change::
+        :tags: bug, orm
+        :tickets: 2750
+
+        A warning is emitted when trying to flush an object of an inherited
+        mapped class where the polymorphic discriminator has been assigned
+        to a value that is invalid for the class.   Also in 0.8.2.
+
+    .. change::
+        :tags: bug, postgresql
+        :tickets: 2740
+
+        The behavior of :func:`.extract` has been simplified on the
+        Postgresql dialect to no longer inject a hardcoded ``::timestamp``
+        or similar cast into the given expression, as this interfered
+        with types such as timezone-aware datetimes, but also
+        does not appear to be at all necessary with modern versions
+        of psycopg2.  Also in 0.8.2.
+
+    .. change::
+        :tags: bug, firebird
+        :tickets: 2757
+
+        Type lookup when reflecting the Firebird types LONG and
+        INT64 has been fixed so that LONG is treated as INTEGER,
+        INT64 treated as BIGINT, unless the type has a "precision"
+        in which case it's treated as NUMERIC.  Patch courtesy
+        Russell Stuart.  Also in 0.8.2.
+
+    .. change::
+        :tags: bug, postgresql
+        :tickets: 2766
+
+        Fixed bug in HSTORE type where keys/values that contained
+        backslashed quotes would not be escaped correctly when
+        using the "non native" (i.e. non-psycopg2) means
+        of translating HSTORE data.  Patch courtesy Ryan Kelly.
+        Also in 0.8.2.
+
+    .. change::
+        :tags: bug, postgresql
+        :tickets: 2767
+
+        Fixed bug where the order of columns in a multi-column
+        Postgresql index would be reflected in the wrong order.
+        Courtesy Roman Podolyaka.  Also in 0.8.2.
+
+    .. change::
+        :tags: bug, sql
+        :tickets: 2746, 2668
+
+        Multiple fixes to the correlation behavior of
+        :class:`.Select` constructs, first introduced in 0.8.0:
+
+        * To satisfy the use case where FROM entries should be
+          correlated outwards to a SELECT that encloses another,
+          which then encloses this one, correlation now works
+          across multiple levels when explicit correlation is
+          established via :meth:`.Select.correlate`, provided
+          that the target select is somewhere along the chain
+          contained by a WHERE/ORDER BY/columns clause, not
+          just nested FROM clauses. This makes
+          :meth:`.Select.correlate` act more compatibly to
+          that of 0.7 again while still maintaining the new
+          "smart" correlation.
+
+        * When explicit correlation is not used, the usual
+          "implicit" correlation limits its behavior to just
+          the immediate enclosing SELECT, to maximize compatibility
+          with 0.7 applications, and also prevents correlation
+          across nested FROMs in this case, maintaining compatibility
+          with 0.8.0/0.8.1.
+
+        * The :meth:`.Select.correlate_except` method was not
+          preventing the given FROM clauses from correlation in
+          all cases, and also would cause FROM clauses to be incorrectly
+          omitted entirely (more like what 0.7 would do),
+          this has been fixed.
+
+        * Calling `select.correlate_except(None)` will enter
+          all FROM clauses into correlation as would be expected.
+
+        Also in 0.8.2.
+
+    .. change::
         :tags: bug, ext
 
         Fixed bug whereby if a composite type were set up
@@ -34,6 +275,10 @@
         :class:`.ForeignKey` - the type will be copied from the
         target column as soon as that other column is associated,
         and now works for composite foreign keys as well.
+
+        .. seealso::
+
+            :ref:`migration_1765`
 
     .. change::
         :tags: feature, sql
@@ -220,6 +465,13 @@
             :ref:`feature_joins_09`
 
     .. change::
+        :tags: bug, mssql, pyodbc
+        :tickets: 2355
+
+        Fixes to MSSQL with Python 3 + pyodbc, including that statements
+        are passed correctly.
+
+    .. change::
         :tags: bug, mssql
         :tickets: 2747
 
@@ -291,6 +543,10 @@
         full expression.  This gives the database a better chance to
         optimize the evaulation of the same expression in two different
         contexts.
+
+        .. seealso::
+
+            :ref:`migration_1068`
 
     .. change::
         :tags: feature, firebird

@@ -211,8 +211,20 @@ def get_func_kwargs(func):
 
     """
 
-    return inspect.getargspec(func)[0]
+    return compat.inspect_getargspec(func)[0]
 
+def get_callable_argspec(fn, no_self=False):
+    if isinstance(fn, types.FunctionType):
+        return compat.inspect_getargspec(fn)
+    elif isinstance(fn, types.MethodType) and no_self:
+        spec = compat.inspect_getargspec(fn.__func__)
+        return compat.ArgSpec(spec.args[1:], spec.varargs, spec.keywords, spec.defaults)
+    elif hasattr(fn, '__func__'):
+        return compat.inspect_getargspec(fn.__func__)
+    elif hasattr(fn, '__call__'):
+        return get_callable_argspec(fn.__call__)
+    else:
+        raise ValueError("Can't inspect function: %s" % fn)
 
 def format_argspec_plus(fn, grouped=True):
     """Returns a dictionary of formatted, introspected function arguments.
@@ -1031,9 +1043,21 @@ def warn(msg, stacklevel=3):
         warnings.warn(msg, stacklevel=stacklevel)
 
 
+def only_once(fn):
+    """Decorate the given function to be a no-op after it is called exactly
+    once."""
+
+    once = [fn]
+    def go(*arg, **kw):
+        if once:
+            once_fn = once.pop()
+            return once_fn(*arg, **kw)
+
+    return update_wrapper(go, fn)
+
+
 _SQLA_RE = re.compile(r'sqlalchemy/([a-z_]+/){0,2}[a-z_]+\.py')
 _UNITTEST_RE = re.compile(r'unit(?:2|test2?/)')
-
 
 def chop_traceback(tb, exclude_prefix=_UNITTEST_RE, exclude_suffix=_SQLA_RE):
     """Chop extraneous lines off beginning and end of a traceback.

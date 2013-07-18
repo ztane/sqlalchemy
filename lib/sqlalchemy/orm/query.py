@@ -577,6 +577,13 @@ class Query(object):
 
     @property
     def selectable(self):
+        """Return the :class:`.Select` object emitted by this :class:`.Query`.
+
+        Used for :func:`.inspect` compatibility, this is equivalent to::
+
+            query.enable_eagerloads(False).with_labels().statement
+
+        """
         return self.__clause_element__()
 
     def __clause_element__(self):
@@ -716,12 +723,12 @@ class Query(object):
         loading, the full result for all rows is fetched which generally
         defeats the purpose of :meth:`~sqlalchemy.orm.query.Query.yield_per`.
 
-        Also note that many DBAPIs do not "stream" results, pre-buffering
-        all rows before making them available, including mysql-python and
-        psycopg2.  :meth:`~sqlalchemy.orm.query.Query.yield_per` will also
-        set the ``stream_results`` execution
-        option to ``True``, which currently is only understood by psycopg2
-        and causes server side cursors to be used.
+        Also note that while :meth:`~sqlalchemy.orm.query.Query.yield_per`
+        will set the ``stream_results`` execution option to True, currently
+        this is only understood by :mod:`~sqlalchemy.dialects.postgresql.psycopg2` dialect
+        which will stream results using server side cursors instead of pre-buffer
+        all rows for this query. Other DBAPIs pre-buffer all rows before
+        making them available.
 
         """
         self._yield_per = count
@@ -1892,7 +1899,7 @@ class Query(object):
         aliased_entity = right_mapper and \
                             not right_is_aliased and \
                             (
-                                isinstance(
+                                right_mapper.with_polymorphic and isinstance(
                                     right_mapper._with_polymorphic_selectable,
                                     expression.Alias)
                                 or

@@ -144,6 +144,12 @@ class SuiteRequirements(Requirements):
                 )
 
     @property
+    def insert_from_select(self):
+        """target platform supports INSERT from a SELECT."""
+
+        return exclusions.open()
+
+    @property
     def returning(self):
         """target platform supports RETURNING."""
 
@@ -371,6 +377,15 @@ class SuiteRequirements(Requirements):
         the .000 maintained."""
 
         return exclusions.closed()
+
+    @property
+    def floats_to_four_decimals(self):
+        """target backend can return a floating-point number with four
+        significant digits (such as 15.7563) accurately
+        (i.e. without FP inaccuracies, such as 15.75629997253418).
+
+        """
+        return exclusions.open()
 
     @property
     def text_type(self):

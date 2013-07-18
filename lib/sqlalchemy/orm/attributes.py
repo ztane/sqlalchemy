@@ -605,7 +605,7 @@ class AttributeImpl(object):
 
                 if key in state.callables:
                     callable_ = state.callables[key]
-                    value = callable_(passive)
+                    value = callable_(state, passive)
                 elif self.callable_:
                     value = self.callable_(state, passive)
                 else:
@@ -881,7 +881,7 @@ class CollectionAttributeImpl(AttributeImpl):
 
         if self.key in state.committed_state:
             original = state.committed_state[self.key]
-            if original is not NO_VALUE:
+            if original not in (NO_VALUE, NEVER_SET):
                 current_states = [((c is not None) and
                                     instance_state(c) or None, c)
                                     for c in current]
@@ -1324,7 +1324,7 @@ class History(History):
             return cls((), (), ())
 
         current = getattr(current, '_sa_adapter')
-        if original is NO_VALUE:
+        if original in (NO_VALUE, NEVER_SET):
             return cls(list(current), (), ())
         elif original is _NO_HISTORY:
             return cls((), list(current), ())

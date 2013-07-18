@@ -1468,6 +1468,10 @@ def _cloned_intersection(a, b):
     return set(elem for elem in a
                if all_overlap.intersection(elem._cloned_set))
 
+def _cloned_difference(a, b):
+    all_overlap = set(_expand_cloned(a)).intersection(_expand_cloned(b))
+    return set(elem for elem in a
+                if not all_overlap.intersection(elem._cloned_set))
 
 def _from_objects(*elements):
     return itertools.chain(*[element._from_objects for element in elements])
@@ -1594,6 +1598,14 @@ def _interpret_as_from(element):
     elif hasattr(insp, "selectable"):
         return insp.selectable
     raise exc.ArgumentError("FROM expression expected")
+
+def _interpret_as_select(element):
+    element = _interpret_as_from(element)
+    if isinstance(element, Alias):
+        element = element.original
+    if not isinstance(element, Select):
+        element = element.select()
+    return element
 
 
 def _const_expr(element):
@@ -2348,7 +2360,10 @@ class ColumnElement(ClauseElement, ColumnOperators):
         """
         if name is None:
             name = self.anon_label
-            key = str(self)
+            try:
+                key = str(self)
+            except exc.UnsupportedCompilationError:
+                key = self.anon_label
         else:
             key = name
         co = ColumnClause(_as_truncated(name) if name_is_truncatable else name,
@@ -5262,7 +5277,7 @@ class Select(HasPrefixes, SelectBase):
     _distinct = False
     _from_cloned = None
     _correlate = ()
-    _correlate_except = ()
+    _correlate_except = None
     _memoized_property = SelectBase._memoized_property
 
     def __init__(self,
@@ -5357,7 +5372,8 @@ class Select(HasPrefixes, SelectBase):
 
         return froms
 
-    def _get_display_froms(self, existing_froms=None, asfrom=False):
+    def _get_display_froms(self, explicit_correlate_froms=None,
+                                    implicit_correlate_froms=None):
         """Return the full list of 'from' clauses to be displayed.
 
         Takes into account a set of existing froms which may be
@@ -5368,7 +5384,9 @@ class Select(HasPrefixes, SelectBase):
         """
         froms = self._froms
 
-        toremove = set(itertools.chain(*[f._hide_froms for f in froms]))
+        toremove = set(itertools.chain(*[
+                            _expand_cloned(f._hide_froms)
+                            for f in froms]))
         if toremove:
             # if we're maintaining clones of froms,
             # add the copies out to the toremove list.  only include
@@ -5383,36 +5401,42 @@ class Select(HasPrefixes, SelectBase):
             # using a list to maintain ordering
             froms = [f for f in froms if f not in toremove]
 
-        if not asfrom:
-            if self._correlate:
+        if self._correlate:
+            to_correlate = self._correlate
+            if to_correlate:
                 froms = [
                     f for f in froms if f not in
                     _cloned_intersection(
-                        _cloned_intersection(froms, existing_froms or ()),
-                        self._correlate
-                    )
-                ]
-            if self._correlate_except:
-                froms = [
-                    f for f in froms if f in
-                    _cloned_intersection(
-                        froms,
-                        self._correlate_except
+                        _cloned_intersection(froms, explicit_correlate_froms or ()),
+                        to_correlate
                     )
                 ]
 
-            if self._auto_correlate and existing_froms and len(froms) > 1:
-                froms = [
-                    f for f in froms if f not in
-                    _cloned_intersection(froms, existing_froms)
-                ]
+        if self._correlate_except is not None:
 
-                if not len(froms):
-                    raise exc.InvalidRequestError("Select statement '%s"
-                            "' returned no FROM clauses due to "
-                            "auto-correlation; specify "
-                            "correlate(<tables>) to control "
-                            "correlation manually." % self)
+            froms = [
+                f for f in froms if f not in
+                _cloned_difference(
+                    _cloned_intersection(froms, explicit_correlate_froms or ()),
+                    self._correlate_except
+                )
+            ]
+
+        if self._auto_correlate and \
+            implicit_correlate_froms and \
+            len(froms) > 1:
+
+            froms = [
+                f for f in froms if f not in
+                _cloned_intersection(froms, implicit_correlate_froms)
+            ]
+
+            if not len(froms):
+                raise exc.InvalidRequestError("Select statement '%s"
+                        "' returned no FROM clauses due to "
+                        "auto-correlation; specify "
+                        "correlate(<tables>) to control "
+                        "correlation manually." % self)
 
         return froms
 
@@ -5757,19 +5781,52 @@ class Select(HasPrefixes, SelectBase):
 
     @_generative
     def correlate(self, *fromclauses):
-        """return a new select() construct which will correlate the given FROM
-        clauses to that of an enclosing select(), if a match is found.
+        """return a new :class:`.Select` which will correlate the given FROM
+        clauses to that of an enclosing :class:`.Select`.
 
-        By "match", the given fromclause must be present in this select's
-        list of FROM objects and also present in an enclosing select's list of
-        FROM objects.
+        Calling this method turns off the :class:`.Select` object's
+        default behavior of "auto-correlation".  Normally, FROM elements
+        which appear in a :class:`.Select` that encloses this one via
+        its :term:`WHERE clause`, ORDER BY, HAVING or
+        :term:`columns clause` will be omitted from this :class:`.Select`
+        object's :term:`FROM clause`.
+        Setting an explicit correlation collection using the
+        :meth:`.Select.correlate` method provides a fixed list of FROM objects
+        that can potentially take place in this process.
 
-        Calling this method turns off the select's default behavior of
-        "auto-correlation". Normally, select() auto-correlates all of its FROM
-        clauses to those of an embedded select when compiled.
+        When :meth:`.Select.correlate` is used to apply specific FROM clauses
+        for correlation, the FROM elements become candidates for
+        correlation regardless of how deeply nested this :class:`.Select`
+        object is, relative to an enclosing :class:`.Select` which refers to
+        the same FROM object.  This is in contrast to the behavior of
+        "auto-correlation" which only correlates to an immediate enclosing
+        :class:`.Select`.   Multi-level correlation ensures that the link
+        between enclosed and enclosing :class:`.Select` is always via
+        at least one WHERE/ORDER BY/HAVING/columns clause in order for
+        correlation to take place.
 
-        If the fromclause is None, correlation is disabled for the returned
-        select().
+        If ``None`` is passed, the :class:`.Select` object will correlate
+        none of its FROM entries, and all will render unconditionally
+        in the local FROM clause.
+
+        :param \*fromclauses: a list of one or more :class:`.FromClause`
+         constructs, or other compatible constructs (i.e. ORM-mapped
+         classes) to become part of the correlate collection.
+
+         .. versionchanged:: 0.8.0 ORM-mapped classes are accepted by
+            :meth:`.Select.correlate`.
+
+        .. versionchanged:: 0.8.0 The :meth:`.Select.correlate` method no
+           longer unconditionally removes entries from the FROM clause; instead,
+           the candidate FROM entries must also be matched by a FROM entry
+           located in an enclosing :class:`.Select`, which ultimately encloses
+           this one as present in the WHERE clause, ORDER BY clause, HAVING
+           clause, or columns clause of an enclosing :meth:`.Select`.
+
+        .. versionchanged:: 0.8.2 explicit correlation takes place
+           via any level of nesting of :class:`.Select` objects; in previous
+           0.8 versions, correlation would only occur relative to the immediate
+           enclosing :class:`.Select` construct.
 
         .. seealso::
 
@@ -5787,9 +5844,30 @@ class Select(HasPrefixes, SelectBase):
 
     @_generative
     def correlate_except(self, *fromclauses):
-        """"Return a new select() construct which will auto-correlate
-        on FROM clauses of enclosing selectables, except for those FROM
-        clauses specified here.
+        """return a new :class:`.Select` which will omit the given FROM
+        clauses from the auto-correlation process.
+
+        Calling :meth:`.Select.correlate_except` turns off the
+        :class:`.Select` object's default behavior of
+        "auto-correlation" for the given FROM elements.  An element
+        specified here will unconditionally appear in the FROM list, while
+        all other FROM elements remain subject to normal auto-correlation
+        behaviors.
+
+        .. versionchanged:: 0.8.2 The :meth:`.Select.correlate_except`
+           method was improved to fully prevent FROM clauses specified here
+           from being omitted from the immediate FROM clause of this
+           :class:`.Select`.
+
+        If ``None`` is passed, the :class:`.Select` object will correlate
+        all of its FROM entries.
+
+        .. versionchanged:: 0.8.2 calling ``correlate_except(None)`` will
+           correctly auto-correlate all FROM clauses.
+
+        :param \*fromclauses: a list of one or more :class:`.FromClause`
+         constructs, or other compatible constructs (i.e. ORM-mapped
+         classes) to become part of the correlate-exception collection.
 
         .. seealso::
 
@@ -5798,11 +5876,12 @@ class Select(HasPrefixes, SelectBase):
             :ref:`correlated_subqueries`
 
         """
+
         self._auto_correlate = False
         if fromclauses and fromclauses[0] is None:
             self._correlate_except = ()
         else:
-            self._correlate_except = set(self._correlate_except).union(
+            self._correlate_except = set(self._correlate_except or ()).union(
                     _interpret_as_from(f) for f in fromclauses)
 
     def append_correlation(self, fromclause):
@@ -6169,9 +6248,10 @@ class ValuesBase(UpdateBase):
 
     _supports_multi_parameters = False
     _has_multi_parameters = False
+    select = None
 
     def __init__(self, table, values, prefixes):
-        self.table = table
+        self.table = _interpret_as_from(table)
         self.parameters, self._has_multi_parameters = \
                             self._process_colparams(values)
         if prefixes:
@@ -6270,6 +6350,9 @@ class ValuesBase(UpdateBase):
             :func:`~.expression.update` - produce an ``UPDATE`` statement
 
         """
+        if self.select is not None:
+            raise exc.InvalidRequestError(
+                        "This construct already inserts from a SELECT")
         if self._has_multi_parameters and kwargs:
             raise exc.InvalidRequestError(
                         "This construct already has multiple parameter sets.")
@@ -6350,9 +6433,55 @@ class Insert(ValuesBase):
         else:
             return ()
 
+    @_generative
+    def from_select(self, names, select):
+        """Return a new :class:`.Insert` construct which represents
+        an ``INSERT...FROM SELECT`` statement.
+
+        e.g.::
+
+            sel = select([table1.c.a, table1.c.b]).where(table1.c.c > 5)
+            ins = table2.insert().from_select(['a', 'b'], sel)
+
+        :param names: a sequence of string column names or :class:`.Column`
+         objects representing the target columns.
+        :param select: a :func:`.select` construct, :class:`.FromClause`
+         or other construct which resolves into a :class:`.FromClause`,
+         such as an ORM :class:`.Query` object, etc.  The order of
+         columns returned from this FROM clause should correspond to the
+         order of columns sent as the ``names`` parameter;  while this
+         is not checked before passing along to the database, the database
+         would normally raise an exception if these column lists don't
+         correspond.
+
+        .. note::
+
+           Depending on backend, it may be necessary for the :class:`.Insert`
+           statement to be constructed using the ``inline=True`` flag; this
+           flag will prevent the implicit usage of ``RETURNING`` when the
+           ``INSERT`` statement is rendered, which isn't supported on a backend
+           such as Oracle in conjunction with an ``INSERT..SELECT`` combination::
+
+             sel = select([table1.c.a, table1.c.b]).where(table1.c.c > 5)
+             ins = table2.insert(inline=True).from_select(['a', 'b'], sel)
+
+        .. versionadded:: 0.8.3
+
+        """
+        if self.parameters:
+            raise exc.InvalidRequestError(
+                        "This construct already inserts value expressions")
+
+        self.parameters, self._has_multi_parameters = \
+                self._process_colparams(dict((n, null()) for n in names))
+
+        self.select = _interpret_as_select(select)
+
     def _copy_internals(self, clone=_clone, **kw):
         # TODO: coverage
         self.parameters = self.parameters.copy()
+        if self.select is not None:
+            self.select = _clone(self.select)
 
 
 class Update(ValuesBase):
@@ -6439,7 +6568,7 @@ class Delete(UpdateBase):
             prefixes=None,
             **kwargs):
         self._bind = bind
-        self.table = table
+        self.table = _interpret_as_from(table)
         self._returning = returning
 
         if prefixes:

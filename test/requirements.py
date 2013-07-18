@@ -536,6 +536,9 @@ class DefaultRequirements(SuiteRequirements):
                 ]
                 )
 
+    @property
+    def floats_to_four_decimals(self):
+        return fails_if("mysql+oursql", "Floating point error")
 
     @property
     def python2(self):
@@ -646,6 +649,18 @@ class DefaultRequirements(SuiteRequirements):
 
         return skip_if(self._has_mysql_on_windows,
                 "Not supported on MySQL + Windows"
+            )
+
+    @property
+    def threading_with_mock(self):
+        """Mark tests that use threading and mock at the same time - stability
+        issues have been observed with coverage + python 3.3
+
+        """
+        return skip_if(
+                lambda: util.py3k and
+                    self.config.options.enable_plugin_coverage,
+                "Stability issues with coverage + py3k"
             )
 
     @property

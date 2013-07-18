@@ -215,7 +215,42 @@ against ``b_value`` directly.
 
 :ticket:`2751`
 
+New Features
+============
 
+.. _feature_722:
+
+INSERT from SELECT
+------------------
+
+After literally years of pointless procrastination this relatively minor
+syntactical feature has been added, and is also backported to 0.8.3,
+so technically isn't "new" in 0.9.   A :func:`.select` construct or other
+compatible construct can be passed to the new method :meth:`.Insert.from_select`
+where it will be used to render an ``INSERT .. SELECT`` construct::
+
+    >>> from sqlalchemy.sql import table, column
+    >>> t1 = table('t1', column('a'), column('b'))
+    >>> t2 = table('t2', column('x'), column('y'))
+    >>> print(t1.insert().from_select(['a', 'b'], t2.select().where(t2.c.y == 5)))
+    INSERT INTO t1 (a, b) SELECT t2.x, t2.y
+    FROM t2
+    WHERE t2.y = :y_1
+
+The construct is smart enough to also accommodate ORM objects such as classes
+and :class:`.Query` objects::
+
+    s = Session()
+    q = s.query(User.id, User.name).filter_by(name='ed')
+    ins = insert(Address).from_select((Address.id, Address.email_address), q)
+
+rendering::
+
+    INSERT INTO addresses (id, email_address)
+    SELECT users.id AS users_id, users.name AS users_name
+    FROM users WHERE users.name = :name_1
+
+:ticket:`722`
 
 Behavioral Improvements
 =======================
@@ -387,6 +422,8 @@ Generates (everywhere except SQLite)::
 
 :ticket:`2369` :ticket:`2587`
 
+.. _migration_1068:
+
 Label constructs can now render as their name alone in an ORDER BY
 ------------------------------------------------------------------
 
@@ -422,6 +459,8 @@ The above format works on all databases tested, but might have compatibility iss
 that will disable the feature based on database version detection.
 
 :ticket:`1068`
+
+.. _migration_1765:
 
 Columns can reliably get their type from a column referred to via ForeignKey
 ----------------------------------------------------------------------------
@@ -519,5 +558,38 @@ specifier, i.e. ``firebird://``.  ``fdb`` is a ``kinterbasdb`` compatible
 DBAPI which per the Firebird project is now their official Python driver.
 
 :ticket:`2504`
+
+Firebird ``fdb`` and ``kinterbasdb`` set ``retaining=False`` by default
+-----------------------------------------------------------------------
+
+Both the ``fdb`` and ``kinterbasdb`` DBAPIs support a flag ``retaining=True``
+which can be passed to the ``commit()`` and ``rollback()`` methods of its
+connection.  The documented rationale for this flag is so that the DBAPI
+can re-use internal transaction state for subsequent transactions, for the
+purposes of improving performance.   However, newer documentation refers
+to analyses of Firebird's "garbage collection" which expresses that this flag
+can have a negative effect on the database's ability to process cleanup
+tasks, and has been reported as *lowering* performance as a result.
+
+It's not clear how this flag is actually usable given this information,
+and as it appears to be only a performance enhancing feature, it now defaults
+to ``False``.  The value can be controlled by passing the flag ``retaining=True``
+to the :func:`.create_engine` call.  This is a new flag which is added as of
+0.8.2, so applications on 0.8.2 can begin setting this to ``True`` or ``False``
+as desired.
+
+.. seealso::
+
+    :mod:`sqlalchemy.dialects.firebird.fdb`
+
+    :mod:`sqlalchemy.dialects.firebird.kinterbasdb`
+
+    http://pythonhosted.org/fdb/usage-guide.html#retaining-transactions - information
+    on the "retaining" flag.
+
+:ticket:`2763`
+
+
+
 
 

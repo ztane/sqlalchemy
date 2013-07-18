@@ -1027,28 +1027,6 @@ class PGCompiler(compiler.SQLCompiler):
 
         return 'RETURNING ' + ', '.join(columns)
 
-    def visit_extract(self, extract, **kwargs):
-        field = self.extract_map.get(extract.field, extract.field)
-        if extract.expr.type:
-            affinity = extract.expr.type._type_affinity
-        else:
-            affinity = None
-
-        casts = {
-                    sqltypes.Date: 'date',
-                    sqltypes.DateTime: 'timestamp',
-                    sqltypes.Interval: 'interval',
-                    sqltypes.Time: 'time'
-                }
-        cast = casts.get(affinity, None)
-        if isinstance(extract.expr, sql.ColumnElement) and cast is not None:
-            expr = extract.expr.op('::', precedence=100)(
-                                        sql.literal_column(cast))
-        else:
-            expr = extract.expr
-        return "EXTRACT(%s FROM %s)" % (
-            field, self.process(expr))
-
 
     def visit_substring_func(self, func, **kw):
         s = self.process(func.clauses.clauses[0], **kw)
@@ -1952,7 +1930,7 @@ class PGDialect(default.DefaultDialect):
           SELECT
               i.relname as relname,
               ix.indisunique, ix.indexprs, ix.indpred,
-              a.attname
+              a.attname, a.attnum, ix.indkey
           FROM
               pg_class t
                     join pg_index ix on t.oid = ix.indrelid
@@ -1972,11 +1950,12 @@ class PGDialect(default.DefaultDialect):
         t = sql.text(IDX_SQL, typemap={'attname': sqltypes.Unicode})
         c = connection.execute(t, table_oid=table_oid)
 
-        index_names = {}
-        indexes = []
+        indexes = defaultdict(lambda: defaultdict(dict))
+
         sv_idx_name = None
         for row in c.fetchall():
-            idx_name, unique, expr, prd, col = row
+            idx_name, unique, expr, prd, col, col_num, idx_key = row
+
             if expr:
                 if idx_name != sv_idx_name:
                     util.warn(
@@ -1985,22 +1964,25 @@ class PGDialect(default.DefaultDialect):
                       % idx_name)
                 sv_idx_name = idx_name
                 continue
+
             if prd and not idx_name == sv_idx_name:
                 util.warn(
                    "Predicate of partial index %s ignored during reflection"
                    % idx_name)
                 sv_idx_name = idx_name
-            if idx_name in index_names:
-                index_d = index_names[idx_name]
-            else:
-                index_d = {'column_names': []}
-                indexes.append(index_d)
-                index_names[idx_name] = index_d
-            index_d['name'] = idx_name
+
+            index = indexes[idx_name]
             if col is not None:
-                index_d['column_names'].append(col)
-            index_d['unique'] = unique
-        return indexes
+                index['cols'][col_num] = col
+            index['key'] = [int(k.strip()) for k in idx_key.split()]
+            index['unique'] = unique
+
+        return [
+            {'name': name,
+             'unique': idx['unique'],
+             'column_names': [idx['cols'][i] for i in idx['key']]}
+            for name, idx in indexes.items()
+        ]
 
     @reflection.cache
     def get_unique_constraints(self, connection, table_name,
