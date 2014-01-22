@@ -1215,6 +1215,16 @@ class DeleteBeforeInsertDP(object):
             (before_delete, deletes)
         ])
 
+    @classmethod
+    def save_depends_on_delete(cls, uow, dependent, dependee, mapper):
+        """return True if we've set up a dependency rule between two
+        states.
+
+        """
+        dep_proc = unitofwork.SaveUpdateState(uow, dependent, mapper)
+        dee_proc = unitofwork.DeleteState(uow, dependee, mapper)
+        return (dee_proc, dep_proc) in uow.dependencies
+
     def per_state_flush_actions(self, uow, states, isdelete):
         # finally, we get called when the UOW has decided, "OK,
         # we need to figure out on a state-by-state basis which of you

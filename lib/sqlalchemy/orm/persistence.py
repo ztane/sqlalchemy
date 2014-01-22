@@ -119,8 +119,8 @@ def delete_obj(base_mapper, states, uowtransaction):
                         in states_to_delete:
         mapper.dispatch.after_delete(mapper, connection, state)
 
-
-def _organize_states_for_save(base_mapper, states, uowtransaction):
+@util.dependencies("sqlalchemy.orm.dependency")
+def _organize_states_for_save(dependency, base_mapper, states, uowtransaction):
     """Make an initial pass across a set of states for INSERT or
     UPDATE.
 
@@ -168,16 +168,16 @@ def _organize_states_for_save(base_mapper, states, uowtransaction):
                     "with persistent instance %s" %
                     (state_str(state), instance_key,
                      state_str(existing)))
+            elif not dependency.DeleteBeforeInsertDP.save_depends_on_delete(uowtransaction, state, existing, mapper):
+                base_mapper._log_debug(
+                    "detected row switch for identity %s.  "
+                    "will update %s, remove %s from "
+                    "transaction", instance_key,
+                    state_str(state), state_str(existing))
 
-            base_mapper._log_debug(
-                "detected row switch for identity %s.  "
-                "will update %s, remove %s from "
-                "transaction", instance_key,
-                state_str(state), state_str(existing))
-
-            # remove the "delete" flag from the existing element
-            uowtransaction.remove_state_actions(existing)
-            row_switch = existing
+                # remove the "delete" flag from the existing element
+                uowtransaction.remove_state_actions(existing)
+                row_switch = existing
 
         if not has_identity and not row_switch:
             states_to_insert.append(

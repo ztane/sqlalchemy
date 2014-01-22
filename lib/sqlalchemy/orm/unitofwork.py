@@ -160,6 +160,7 @@ class UOWTransaction(object):
 
         return state in self.states and self.states[state][0]
 
+
     def memo(self, key, callable_):
         if key in self.attributes:
             return self.attributes[key]
