@@ -87,6 +87,8 @@ known driver available for that backend (i.e. cx_oracle, pysqlite/sqlite3,
 psycopg2, mysqldb). For Jython connections, specify the `zxjdbc` driver, which
 is the JDBC-DBAPI bridge included with Jython.
 
+.. autofunction:: sqlalchemy.engine.url.make_url
+
 Postgresql
 ----------
 
@@ -125,7 +127,7 @@ More notes on connecting to MySQL at :ref:`mysql_toplevel`.
 Oracle
 ------
 
-cx_oracle is usualjy used here::
+cx_oracle is usually used here::
 
     engine = create_engine('oracle://scott:tiger@127.0.0.1:1521/sidname')
 

@@ -1,5 +1,5 @@
 # sqlite/base.py
-# Copyright (C) 2005-2013 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2014 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -130,14 +130,14 @@ for new connections through the usage of events::
 import datetime
 import re
 
-from sqlalchemy import sql, exc
-from sqlalchemy.engine import default, base, reflection
-from sqlalchemy import types as sqltypes
-from sqlalchemy import util
-from sqlalchemy.sql import compiler
-from sqlalchemy import processors
+from ... import sql, exc
+from ...engine import default, reflection
+from ... import types as sqltypes, schema as sa_schema
+from ... import util
+from ...sql import compiler
+from ... import processors
 
-from sqlalchemy.types import BIGINT, BLOB, BOOLEAN, CHAR,\
+from ...types import BIGINT, BLOB, BOOLEAN, CHAR,\
     DECIMAL, FLOAT, REAL, INTEGER, NUMERIC, SMALLINT, TEXT,\
     TIMESTAMP, VARCHAR
 
@@ -159,6 +159,13 @@ class _DateTimeMixin(object):
         if self._reg:
             kw["regexp"] = self._reg
         return util.constructor_copy(self, cls, **kw)
+
+    def literal_processor(self, dialect):
+        bp = self.bind_processor(dialect)
+        def process(value):
+            return "'%s'" % bp(value)
+        return process
+
 
 class DATETIME(_DateTimeMixin, sqltypes.DateTime):
     """Represent a Python datetime object in SQLite using a string.
@@ -210,6 +217,7 @@ class DATETIME(_DateTimeMixin, sqltypes.DateTime):
                 "%(year)04d-%(month)02d-%(day)02d "
                 "%(hour)02d:%(minute)02d:%(second)02d"
             )
+
 
     def bind_processor(self, dialect):
         datetime_datetime = datetime.datetime
@@ -491,7 +499,7 @@ class SQLiteDDLCompiler(compiler.DDLCompiler):
             colspec += " NOT NULL"
 
         if (column.primary_key and
-            column.table.kwargs.get('sqlite_autoincrement', False) and
+            column.table.dialect_options['sqlite']['autoincrement'] and
             len(column.table.primary_key.columns) == 1 and
             issubclass(column.type._type_affinity, sqltypes.Integer) and
             not column.foreign_keys):
@@ -506,7 +514,7 @@ class SQLiteDDLCompiler(compiler.DDLCompiler):
         if len(constraint.columns) == 1:
             c = list(constraint)[0]
             if c.primary_key and \
-                c.table.kwargs.get('sqlite_autoincrement', False) and \
+                c.table.dialect_options['sqlite']['autoincrement'] and \
                 issubclass(c.type._type_affinity, sqltypes.Integer) and \
                 not c.foreign_keys:
                 return None
@@ -614,6 +622,12 @@ class SQLiteDialect(default.DefaultDialect):
 
     supports_cast = True
     supports_default_values = True
+
+    construct_arguments = [
+        (sa_schema.Table, {
+            "autoincrement": False
+        })
+    ]
 
     _broken_fk_pragma_quotes = False
 

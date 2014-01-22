@@ -1,5 +1,5 @@
 # mysql/cymysql.py
-# Copyright (C) 2005-2013 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2014 the SQLAlchemy authors and contributors <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -37,7 +37,9 @@ class MySQLDialect_cymysql(MySQLDialect_mysqldb):
     driver = 'cymysql'
 
     description_encoding = None
-    supports_sane_rowcount = False
+    supports_sane_rowcount = True
+    supports_sane_multi_rowcount = False
+    supports_unicode_statements = True
 
     colspecs = util.update_copy(
         MySQLDialect.colspecs,

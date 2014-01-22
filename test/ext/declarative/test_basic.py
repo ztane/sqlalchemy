@@ -4,14 +4,14 @@ from sqlalchemy.testing import eq_, assert_raises, \
 from sqlalchemy.ext import declarative as decl
 from sqlalchemy import exc
 import sqlalchemy as sa
-from sqlalchemy import testing
+from sqlalchemy import testing, util
 from sqlalchemy import MetaData, Integer, String, ForeignKey, \
     ForeignKeyConstraint, Index
 from sqlalchemy.testing.schema import Table, Column
 from sqlalchemy.orm import relationship, create_session, class_mapper, \
     joinedload, configure_mappers, backref, clear_mappers, \
     deferred, column_property, composite,\
-    Session
+    Session, properties
 from sqlalchemy.testing import eq_
 from sqlalchemy.util import classproperty, with_metaclass
 from sqlalchemy.ext.declarative import declared_attr, AbstractConcreteBase, \
@@ -77,6 +77,26 @@ class DeclarativeTest(DeclarativeTestBase):
         eq_(a1, Address(email='two'))
         eq_(a1.user, User(name='u1'))
 
+    def test_unicode_string_resolve(self):
+        class User(Base, fixtures.ComparableEntity):
+            __tablename__ = 'users'
+
+            id = Column('id', Integer, primary_key=True,
+                                        test_needs_autoincrement=True)
+            name = Column('name', String(50))
+            addresses = relationship(util.u("Address"), backref="user")
+
+        class Address(Base, fixtures.ComparableEntity):
+            __tablename__ = 'addresses'
+
+            id = Column(Integer, primary_key=True,
+                                        test_needs_autoincrement=True)
+            email = Column(String(50), key='_email')
+            user_id = Column('user_id', Integer, ForeignKey('users.id'),
+                             key='_user_id')
+
+        assert User.addresses.property.mapper.class_ is Address
+
     def test_no_table(self):
         def go():
             class User(Base):
@@ -122,6 +142,71 @@ class DeclarativeTest(DeclarativeTestBase):
 
         assert class_mapper(Bar).get_property('some_data').columns[0] \
             is t.c.data
+
+    def test_column_named_twice(self):
+        def go():
+            class Foo(Base):
+                __tablename__ = 'foo'
+
+                id = Column(Integer, primary_key=True)
+                x = Column('x', Integer)
+                y = Column('x', Integer)
+        assert_raises_message(
+            sa.exc.SAWarning,
+            "On class 'Foo', Column object 'x' named directly multiple times, "
+            "only one will be used: x, y",
+            go
+        )
+
+
+    def test_column_repeated_under_prop(self):
+        def go():
+            class Foo(Base):
+                __tablename__ = 'foo'
+
+                id = Column(Integer, primary_key=True)
+                x = Column('x', Integer)
+                y = column_property(x)
+                z = Column('x', Integer)
+
+        assert_raises_message(
+            sa.exc.SAWarning,
+            "On class 'Foo', Column object 'x' named directly multiple times, "
+            "only one will be used: x, y, z",
+            go
+        )
+
+    def test_relationship_level_msg_for_invalid_callable(self):
+        class A(Base):
+            __tablename__ = 'a'
+            id = Column(Integer, primary_key=True)
+        class B(Base):
+            __tablename__ = 'b'
+            id = Column(Integer, primary_key=True)
+            a_id = Column(Integer, ForeignKey('a.id'))
+            a = relationship('a')
+        assert_raises_message(
+            sa.exc.ArgumentError,
+            "relationship 'a' expects a class or a mapper "
+            "argument .received: .*Table",
+            configure_mappers
+        )
+
+    def test_relationship_level_msg_for_invalid_object(self):
+        class A(Base):
+            __tablename__ = 'a'
+            id = Column(Integer, primary_key=True)
+        class B(Base):
+            __tablename__ = 'b'
+            id = Column(Integer, primary_key=True)
+            a_id = Column(Integer, ForeignKey('a.id'))
+            a = relationship(A.__table__)
+        assert_raises_message(
+            sa.exc.ArgumentError,
+            "relationship 'a' expects a class or a mapper "
+            "argument .received: .*Table",
+            configure_mappers
+        )
 
     def test_difficult_class(self):
         """test no getattr() errors with a customized class"""
@@ -202,10 +287,10 @@ class DeclarativeTest(DeclarativeTestBase):
             user = relationship("User", primaryjoin=user_id == User.id,
                             backref="addresses")
 
-        assert mapperlib._new_mappers is True
+        assert mapperlib.Mapper._new_mappers is True
         u = User()
         assert User.addresses
-        assert mapperlib._new_mappers is False
+        assert mapperlib.Mapper._new_mappers is False
 
     def test_string_dependency_resolution(self):
         from sqlalchemy.sql import desc
@@ -706,6 +791,64 @@ class DeclarativeTest(DeclarativeTestBase):
         a1 = sess.query(Address).filter(Address.email == 'two').one()
         eq_(a1, Address(email='two'))
         eq_(a1.user, User(name='u1'))
+
+    def test_alt_name_attr_subclass_column_inline(self):
+        # [ticket:2900]
+        class A(Base):
+            __tablename__ = 'a'
+            id = Column('id', Integer, primary_key=True)
+            data = Column('data')
+
+        class ASub(A):
+            brap = A.data
+        assert ASub.brap.property is A.data.property
+        assert isinstance(ASub.brap.original_property, properties.SynonymProperty)
+
+    def test_alt_name_attr_subclass_relationship_inline(self):
+        # [ticket:2900]
+        class A(Base):
+            __tablename__ = 'a'
+            id = Column('id', Integer, primary_key=True)
+            b_id = Column(Integer, ForeignKey('b.id'))
+            b = relationship("B", backref="as_")
+
+        class B(Base):
+            __tablename__ = 'b'
+            id = Column('id', Integer, primary_key=True)
+
+        configure_mappers()
+        class ASub(A):
+            brap = A.b
+        assert ASub.brap.property is A.b.property
+        assert isinstance(ASub.brap.original_property, properties.SynonymProperty)
+        ASub(brap=B())
+
+    def test_alt_name_attr_subclass_column_attrset(self):
+        # [ticket:2900]
+        class A(Base):
+            __tablename__ = 'a'
+            id = Column('id', Integer, primary_key=True)
+            data = Column('data')
+        A.brap = A.data
+        assert A.brap.property is A.data.property
+        assert isinstance(A.brap.original_property, properties.SynonymProperty)
+
+    def test_alt_name_attr_subclass_relationship_attrset(self):
+        # [ticket:2900]
+        class A(Base):
+            __tablename__ = 'a'
+            id = Column('id', Integer, primary_key=True)
+            b_id = Column(Integer, ForeignKey('b.id'))
+            b = relationship("B", backref="as_")
+        A.brap = A.b
+        class B(Base):
+            __tablename__ = 'b'
+            id = Column('id', Integer, primary_key=True)
+
+        assert A.brap.property is A.b.property
+        assert isinstance(A.brap.original_property, properties.SynonymProperty)
+        A(brap=B())
+
 
     def test_eager_order_by(self):
 
@@ -1276,8 +1419,10 @@ class DeclarativeTest(DeclarativeTestBase):
         # case
 
         sa.orm.configure_mappers()
-        eq_(str(list(Address.user_id.property.columns[0].foreign_keys)[0]),
-            "ForeignKey('users.id')")
+        eq_(
+            list(Address.user_id.property.columns[0].foreign_keys)[0].column,
+            User.__table__.c.id
+        )
         Base.metadata.create_all()
         u1 = User(name='u1', addresses=[Address(email='one'),
                   Address(email='two')])
