@@ -30,7 +30,6 @@ else:
 from nose.plugins import Plugin
 from nose import SkipTest
 import sys
-import re
 
 # late imports
 fixtures = None
@@ -41,18 +40,23 @@ profiling = None
 assertions = None
 requirements = None
 config = None
+testing = None
 util = None
 file_config = None
 
 
 logging = None
-db = None
-db_label = None
-db_url = None
 db_opts = {}
 options = None
-_existing_engine = None
+_existing_config_obj = None
 
+
+class Config(object):
+    def __init__(self, db, db_opts, options, file_config):
+        self.db = db
+        self.db_opts = db_opts
+        self.options = options
+        self.file_config = file_config
 
 def _log(option, opt_str, value, parser):
     global logging
@@ -76,10 +80,6 @@ def _list_dbs(*args):
 def _server_side_cursors(options, opt_str, value, parser):
     db_opts['server_side_cursors'] = True
 
-
-def _engine_strategy(options, opt_str, value, parser):
-    if value:
-        db_opts['strategy'] = value
 
 pre_configure = []
 post_configure = []
@@ -110,48 +110,38 @@ def _monkeypatch_cdecimal(options, file_config):
 
 @post
 def _engine_uri(options, file_config):
-    global db_label, db_url
+    from sqlalchemy.testing import engines, config
+    from sqlalchemy import testing
 
     if options.dburi:
-        db_url = options.dburi
-        db_label = db_url[:db_url.index(':')]
-    elif options.db:
-        db_label = options.db
-        db_url = None
+        db_urls = list(options.dburi)
+    else:
+        db_urls = []
 
-    if db_url is None:
-        if db_label not in file_config.options('db'):
-            raise RuntimeError(
-                "Unknown URI specifier '%s'.  Specify --dbs for known uris."
-                        % db_label)
-        db_url = file_config.get('db', db_label)
+    if options.db:
+        for db in options.db:
+            if db not in file_config.options('db'):
+                raise RuntimeError(
+                    "Unknown URI specifier '%s'.  Specify --dbs for known uris."
+                            % db)
+            else:
+                db_urls.append(file_config.get('db', db))
 
+    if not db_urls:
+        db_urls.append(file_config.get('db', 'default'))
 
-@post
-def _require(options, file_config):
-    if not(options.require or
-           (file_config.has_section('require') and
-            file_config.items('require'))):
-        return
+    for db_url in db_urls:
+        eng = engines.testing_engine(db_url, db_opts)
+        eng.connect().close()
+        config_obj = Config(eng, db_opts, options, file_config)
+        if not config.db:
+            config.db = testing.db = eng
+            config._current = config_obj
+        config.dbs[eng.name] = config_obj
+        config.dbs[(eng.name, eng.dialect)] = config_obj
+        config.dbs[eng] = config_obj
 
-    try:
-        import pkg_resources
-    except ImportError:
-        raise RuntimeError("setuptools is required for version requirements")
-
-    cmdline = []
-    for requirement in options.require:
-        pkg_resources.require(requirement)
-        cmdline.append(re.split('\s*(<!>=)', requirement, 1)[0])
-
-    if file_config.has_section('require'):
-        for label, requirement in file_config.items('require'):
-            if not label == db_label or label.startswith('%s.' % db_label):
-                continue
-            seen = [c for c in cmdline if requirement.startswith(c)]
-            if seen:
-                continue
-            pkg_resources.require(requirement)
+    config.db_opts = db_opts
 
 
 @post
@@ -160,55 +150,40 @@ def _engine_pool(options, file_config):
         from sqlalchemy import pool
         db_opts['poolclass'] = pool.AssertionPool
 
-
-@post
-def _create_testing_engine(options, file_config):
-    from sqlalchemy.testing import engines, config
-    from sqlalchemy import testing
-    global db
-    config.db = testing.db = db = engines.testing_engine(db_url, db_opts)
-    config.db.connect().close()
-    config.db_opts = db_opts
-    config.db_url = db_url
-
-
 @post
 def _prep_testing_database(options, file_config):
-    from sqlalchemy.testing import engines
+    from sqlalchemy.testing import config
     from sqlalchemy import schema, inspect
 
-    # also create alt schemas etc. here?
     if options.dropfirst:
-        e = engines.utf8_engine()
-        inspector = inspect(e)
+        for e in set(config.dbs.values()):
+            inspector = inspect(e)
 
-        try:
-            view_names = inspector.get_view_names()
-        except NotImplementedError:
-            pass
-        else:
-            for vname in view_names:
-                e.execute(schema._DropView(schema.Table(vname, schema.MetaData())))
+            try:
+                view_names = inspector.get_view_names()
+            except NotImplementedError:
+                pass
+            else:
+                for vname in view_names:
+                    e.execute(schema._DropView(schema.Table(vname, schema.MetaData())))
 
-        try:
-            view_names = inspector.get_view_names(schema="test_schema")
-        except NotImplementedError:
-            pass
-        else:
-            for vname in view_names:
-                e.execute(schema._DropView(
-                            schema.Table(vname,
-                                        schema.MetaData(), schema="test_schema")))
+            try:
+                view_names = inspector.get_view_names(schema="test_schema")
+            except NotImplementedError:
+                pass
+            else:
+                for vname in view_names:
+                    e.execute(schema._DropView(
+                                schema.Table(vname,
+                                            schema.MetaData(), schema="test_schema")))
 
-        for tname in reversed(inspector.get_table_names(order_by="foreign_key")):
-            e.execute(schema.DropTable(schema.Table(tname, schema.MetaData())))
+            for tname in reversed(inspector.get_table_names(order_by="foreign_key")):
+                e.execute(schema.DropTable(schema.Table(tname, schema.MetaData())))
 
-        for tname in reversed(inspector.get_table_names(
-                                order_by="foreign_key", schema="test_schema")):
-            e.execute(schema.DropTable(
-                schema.Table(tname, schema.MetaData(), schema="test_schema")))
-
-        e.dispose()
+            for tname in reversed(inspector.get_table_names(
+                                    order_by="foreign_key", schema="test_schema")):
+                e.execute(schema.DropTable(
+                    schema.Table(tname, schema.MetaData(), schema="test_schema")))
 
 
 @post
@@ -255,8 +230,8 @@ def _setup_requirements(argument):
     for component in modname.split(".")[1:]:
         mod = getattr(mod, component)
     req_cls = getattr(mod, clsname)
-    config.requirements = testing.requires = req_cls(config)
 
+    config.requirements = testing.requires = req_cls()
 
 @post
 def _post_setup_options(opt, file_config):
@@ -288,14 +263,13 @@ class NoseSQLAlchemy(Plugin):
             help="turn on info logging for <LOG> (multiple OK)")
         opt("--log-debug", action="callback", type="string", callback=_log,
             help="turn on debug logging for <LOG> (multiple OK)")
-        opt("--require", action="append", dest="require", default=[],
-            help="require a particular driver or module version (multiple OK)")
-        opt("--db", action="store", dest="db", default="default",
-            help="Use prefab database uri")
+        opt("--db", action="append", type="string", dest="db",
+                    help="Use prefab database uri. Multiple OK, "
+                            "first one is run by default.")
         opt('--dbs', action='callback', callback=_list_dbs,
             help="List available prefab dbs")
-        opt("--dburi", action="store", dest="dburi",
-            help="Database uri (overrides --db)")
+        opt("--dburi", action="append", type="string", dest="dburi",
+            help="Database uri.  Multiple OK, first one is run by default.")
         opt("--dropfirst", action="store_true", dest="dropfirst",
             help="Drop all tables in the target database first")
         opt("--mockpool", action="store_true", dest="mockpool",
@@ -303,9 +277,6 @@ class NoseSQLAlchemy(Plugin):
         opt("--low-connections", action="store_true", dest="low_connections",
             help="Use a low number of distinct connections - i.e. for Oracle TNS"
         )
-        opt("--enginestrategy", action="callback", type="string",
-            callback=_engine_strategy,
-            help="Engine strategy (plain or threadlocal, defaults to plain)")
         opt("--reversetop", action="store_true", dest="reversetop", default=False,
             help="Use a random-ordering set implementation in the ORM (helps "
                   "reveal dependency issues)")
@@ -314,12 +285,6 @@ class NoseSQLAlchemy(Plugin):
             help="requirements class for testing, overrides setup.cfg")
         opt("--with-cdecimal", action="store_true", dest="cdecimal", default=False,
             help="Monkeypatch the cdecimal library into Python 'decimal' for all tests")
-        opt("--unhashable", action="store_true", dest="unhashable", default=False,
-            help="Disallow SQLAlchemy from performing a hash() on mapped test objects.")
-        opt("--noncomparable", action="store_true", dest="noncomparable", default=False,
-            help="Disallow SQLAlchemy from performing == on mapped test objects.")
-        opt("--truthless", action="store_true", dest="truthless", default=False,
-            help="Disallow SQLAlchemy from truth-evaluating mapped test objects.")
         opt("--serverside", action="callback", callback=_server_side_cursors,
             help="Turn on server side cursors for PG")
         opt("--mysql-engine", action="store", dest="mysql_engine", default=None,
@@ -348,7 +313,8 @@ class NoseSQLAlchemy(Plugin):
         # as nose plugins like coverage
         global util, fixtures, engines, exclusions, \
                         assertions, warnings, profiling,\
-                        config
+                        config, testing
+        from sqlalchemy import testing
         from sqlalchemy.testing import fixtures, engines, exclusions, \
                         assertions, warnings, profiling, config
         from sqlalchemy import util
@@ -381,42 +347,34 @@ class NoseSQLAlchemy(Plugin):
 
     def _do_skips(self, cls):
         from sqlalchemy.testing import config
-        if hasattr(cls, '__requires__'):
-            def test_suite():
-                return 'ok'
-            test_suite.__name__ = cls.__name__
-            for requirement in cls.__requires__:
-                check = getattr(config.requirements, requirement)
 
-                if not check.enabled:
-                    raise SkipTest(
-                        check.reason if check.reason
-                        else
-                        (
-                            "'%s' unsupported on DB implementation '%s' == %s" % (
-                                cls.__name__, config.db.name,
-                                config.db.dialect.server_version_info
-                            )
-                        )
-                    )
+        all_configs = set(config._unique_configs())
+        reasons = []
+
+        if hasattr(cls, '__requires__'):
+            requirements = config.requirements
+            for config_obj in list(all_configs):
+                for requirement in cls.__requires__:
+                    check = getattr(requirements, requirement)
+
+                    if check.predicate(config_obj):
+                        all_configs.remove(config_obj)
+                        if check.reason:
+                            reasons.append(check.reason)
+                        break
 
         if cls.__unsupported_on__:
             spec = exclusions.db_spec(*cls.__unsupported_on__)
-            if spec(config.db):
-                raise SkipTest(
-                    "'%s' unsupported on DB implementation '%s' == %s" % (
-                     cls.__name__, config.db.name,
-                        config.db.dialect.server_version_info)
-                    )
+            for config_obj in list(all_configs):
+                if spec(config_obj):
+                    all_configs.remove(config_obj)
 
         if getattr(cls, '__only_on__', None):
             spec = exclusions.db_spec(*util.to_list(cls.__only_on__))
-            if not spec(config.db):
-                raise SkipTest(
-                    "'%s' unsupported on DB implementation '%s' == %s" % (
-                     cls.__name__, config.db.name,
-                        config.db.dialect.server_version_info)
-                    )
+            for config_obj in list(all_configs):
+                if not spec(config_obj):
+                    all_configs.remove(config_obj)
+
 
         if getattr(cls, '__skip_if__', False):
             for c in getattr(cls, '__skip_if__'):
@@ -425,11 +383,33 @@ class NoseSQLAlchemy(Plugin):
                         cls.__name__, c.__name__)
                     )
 
-        for db, op, spec in getattr(cls, '__excluded_on__', ()):
-            exclusions.exclude(db, op, spec,
-                    "'%s' unsupported on DB %s version %s" % (
-                    cls.__name__, config.db.name,
-                    exclusions._server_version(config.db)))
+        for db_spec, op, spec in getattr(cls, '__excluded_on__', ()):
+            for config_obj in list(all_configs):
+                if exclusions.skip_if(exclusions.SpecPredicate(db_spec, op, spec)).predicate(config_obj):
+                    all_configs.remove(config_obj)
+
+
+        if not all_configs:
+            raise SkipTest(
+                "'%s' unsupported on DB implementation %s%s" % (
+                    cls.__name__,
+                    ", ".join("'%s' = %s" % (config_obj.db.name, config_obj.db.dialect.server_version_info)
+                        for config_obj in config._unique_configs()
+                    ),
+                    ", ".join(reasons)
+                )
+            )
+        elif hasattr(cls, '__prefer__'):
+            non_preferred = set()
+            spec = exclusions.db_spec(*util.to_list(cls.__prefer__))
+            for config_obj in all_configs:
+                if not spec(config_obj):
+                    non_preferred.add(config_obj)
+            if all_configs.difference(non_preferred):
+                all_configs.difference_update(non_preferred)
+
+        if config._current not in all_configs:
+            self._setup_config(all_configs.pop(), cls)
 
     def beforeTest(self, test):
         warnings.resetwarnings()
@@ -439,17 +419,30 @@ class NoseSQLAlchemy(Plugin):
         engines.testing_reaper._after_test_ctx()
         warnings.resetwarnings()
 
+    def _setup_config(self, config_obj, ctx):
+        ctx.__use_config__ = config_obj
+
     def _setup_engine(self, ctx):
         if getattr(ctx, '__engine_options__', None):
-            global _existing_engine
-            _existing_engine = config.db
-            config.db = engines.testing_engine(options=ctx.__engine_options__)
+            eng = engines.testing_engine(options=ctx.__engine_options__)
+            config_obj = Config(eng, db_opts, options, file_config)
+        elif getattr(ctx, '__use_config__', None):
+            config_obj = ctx.__use_config__
+        else:
+            config_obj = None
+
+        if config_obj:
+            global _existing_config_obj
+            _existing_config_obj = config._current
+            config._current = config_obj
+            config.db = testing.db = config_obj.db
 
     def _restore_engine(self, ctx):
-        global _existing_engine
-        if _existing_engine is not None:
-            config.db = _existing_engine
-            _existing_engine = None
+        global _existing_config_obj
+        if _existing_config_obj is not None:
+            config.db = testing.db = _existing_config_obj.db
+            config._current = _existing_config_obj
+            _existing_config_obj = None
 
     def startContext(self, ctx):
         if not isinstance(ctx, type) \

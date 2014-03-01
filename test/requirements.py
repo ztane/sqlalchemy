@@ -651,11 +651,11 @@ class DefaultRequirements(SuiteRequirements):
 
     @property
     def hstore(self):
-        def check_hstore():
-            if not against("postgresql"):
+        def check_hstore(config):
+            if not against(config, "postgresql"):
                 return False
             try:
-                self.db.execute("SELECT 'a=>1,a=>2'::hstore;")
+                config.db.execute("SELECT 'a=>1,a=>2'::hstore;")
                 return True
             except:
                 return False
@@ -664,11 +664,11 @@ class DefaultRequirements(SuiteRequirements):
 
     @property
     def range_types(self):
-        def check_range_types():
-            if not against("postgresql+psycopg2"):
+        def check_range_types(config):
+            if not against(config, "postgresql+psycopg2"):
                 return False
             try:
-                self.db.execute("select '[1,2)'::int4range;")
+                config.db.execute("select '[1,2)'::int4range;")
                 # only supported in psycopg 2.5+
                 from psycopg2.extras import NumericRange
                 return True
@@ -684,7 +684,7 @@ class DefaultRequirements(SuiteRequirements):
     @property
     def oracle_test_dblink(self):
         return skip_if(
-                    lambda: not self.config.file_config.has_option(
+                    lambda config: not config.file_config.has_option(
                         'sqla_testing', 'oracle_db_link'),
                     "oracle_db_link option not specified in config"
                 )
@@ -740,11 +740,11 @@ class DefaultRequirements(SuiteRequirements):
         except ImportError:
             return False
 
-    def _has_mysql_on_windows(self):
-        return against('mysql') and \
+    def _has_mysql_on_windows(self, config):
+        return against(config.db, 'mysql') and \
                 self.db.dialect._detect_casing(self.db) == 1
 
-    def _has_mysql_fully_case_sensitive(self):
-        return against('mysql') and \
-                self.db.dialect._detect_casing(self.db) == 0
+    def _has_mysql_fully_case_sensitive(self, config):
+        return against(config.db, 'mysql') and \
+                config.db.dialect._detect_casing(config.db) == 0
 

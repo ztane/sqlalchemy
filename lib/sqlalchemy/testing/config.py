@@ -6,3 +6,10 @@
 
 requirements = None
 db = None
+dbs = {}
+db_opts = None
+_current = None
+file_config = None
+
+def _unique_configs():
+    return set(dbs.values())
