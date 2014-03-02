@@ -287,7 +287,7 @@ class NoseSQLAlchemy(Plugin):
         file_config.read(['setup.cfg', 'test.cfg'])
 
     def configure(self, options, conf):
-        Plugin.configure(self, options, conf)
+        super(NoseSQLAlchemy, self).configure(options, conf)
         self.options = options
         for fn in pre_configure:
             fn(self.options, file_config)
@@ -330,8 +330,87 @@ class NoseSQLAlchemy(Plugin):
             return False
         elif cls.__name__.startswith('_'):
             return False
+        elif getattr(cls, '__multiple__', False):
+            return False
         else:
             return True
+
+    def dont_loadTestsFromName(self, name, module):
+        if module:
+            testcls = getattr(module, name)
+            if isinstance(testcls, type) and \
+                issubclass(testcls, fixtures.TestBase) and \
+                getattr(testcls, '__multiple__', False):
+
+                from nose.loader import TestLoader
+                from nose.util import transplant_class
+                loader = TestLoader(self.conf)
+                testcls = transplant_class(testcls, module.__name__)
+
+                for cfg in config.Config.all_configs():
+                    cls = type(
+                        "%s_%s_%s" % (testcls.__name__, cfg.db.name, cfg.db.driver),
+                        (testcls, ),
+                        {"__only_on__": (cfg.db.name, cfg.db.driver), "__multiple__": False}
+                    )
+                    for tst in loader.loadTestsFromTestClass(cls):
+                        yield tst
+
+
+    def dont_beforeImport(self, filename, module):
+        import pdb
+        pdb.set_trace()
+        for testcls in dir(module):
+            if isinstance(testcls, type) and \
+                issubclass(testcls, fixtures.TestBase) and \
+                getattr(testcls, '__multiple__', False):
+                for cfg in config.Config.all_configs():
+                    name = "%s_%s_%s" % (testcls.__name__, cfg.db.name, cfg.db.driver)
+                    cls = type(
+                        name,
+                        (testcls, ),
+                        {"__only_on__": (cfg.db.name, cfg.db.driver), "__multiple__": False}
+                    )
+                    #setattr(module, name, cls)
+                    yield cls
+
+    def dont_loadTestsFromModule(self, module, path=None):
+        for testcls in dir(module):
+            if isinstance(testcls, type) and \
+                issubclass(testcls, fixtures.TestBase) and \
+                getattr(testcls, '__multiple__', False):
+                for cfg in config.Config.all_configs():
+                    cls = type(
+                        "%s_%s_%s" % (testcls.__name__, cfg.db.name, cfg.db.driver),
+                        (testcls, ),
+                        {"__only_on__": (cfg.db.name, cfg.db.driver), "__multiple__": False}
+                    )
+                    yield cls
+
+                #yield testcls
+
+    def dont_makeTest(self, obj, parent):
+        if hasattr(obj, "__multiple__"):
+            from nose.loader import TestLoader
+            from nose.util import transplant_class
+            loader = TestLoader(self.conf)
+            obj = transplant_class(obj, parent.__name__)
+            def load():
+
+                for cfg in config.Config.all_configs():
+                    cls = type(
+                        "%s_%s_%s" % (obj.__name__, cfg.db.name, cfg.db.driver),
+                        (obj, ),
+                        {"__only_on__": (cfg.db.name, cfg.db.driver), "__multiple__": False}
+                    )
+
+                    for tst in loader.loadTestsFromTestClass(cls):
+                        import pdb
+                        pdb.set_trace()
+                        yield tst
+            return load()
+        else:
+            return None
 
     def _do_skips(self, cls):
 
@@ -385,7 +464,7 @@ class NoseSQLAlchemy(Plugin):
                     ", ".join("'%s' = %s" % (
                                     config_obj.db.name,
                                     config_obj.db.dialect.server_version_info)
-                        for config_obj in config._unique_configs()
+                        for config_obj in config.Config.all_configs()
                     ),
                     ", ".join(reasons)
                 )
@@ -416,7 +495,7 @@ class NoseSQLAlchemy(Plugin):
     def _setup_engine(self, ctx):
         if getattr(ctx, '__engine_options__', None):
             eng = engines.testing_engine(options=ctx.__engine_options__)
-            config._current.push_engine(eng)
+            config._current.push_engine(eng, testing)
 
     def _restore_engine(self, ctx):
         config._current.reset(testing)
