@@ -6,233 +6,20 @@
 
 """Enhance nose with extra options and behaviors for running SQLAlchemy tests.
 
-When running ./sqla_nose.py, this module is imported relative to the
-"plugins" package as a top level package by the sqla_nose.py runner,
-so that the plugin can be loaded with the rest of nose including the coverage
-plugin before any of SQLAlchemy itself is imported, so that coverage works.
-
-When third party libraries use this plugin, it can be imported
-normally as "from sqlalchemy.testing.plugin import noseplugin".
+Must be run via ./sqla_nose.py so that it is imported in the expected
+way (e.g. as a package-less import).
 
 """
 
-from __future__ import absolute_import
-
 import os
-import sys
-import re
-py3k = sys.version_info >= (3, 0)
-
-if py3k:
-    import configparser
-else:
-    import ConfigParser as configparser
 
 from nose.plugins import Plugin
 from nose import SkipTest
-import sys
 
-# late imports
-fixtures = None
-engines = None
-exclusions = None
-warnings = None
-profiling = None
-assertions = None
-requirements = None
-config = None
-testing = None
-util = None
-file_config = None
+import imp
+path = os.path.join(os.path.dirname(__file__), "plugin_base.py")
+plugin_base = imp.load_source("plugin_base", path)
 
-
-logging = None
-db_opts = {}
-options = None
-
-
-def _log(option, opt_str, value, parser):
-    global logging
-    if not logging:
-        import logging
-        logging.basicConfig()
-
-    if opt_str.endswith('-info'):
-        logging.getLogger(value).setLevel(logging.INFO)
-    elif opt_str.endswith('-debug'):
-        logging.getLogger(value).setLevel(logging.DEBUG)
-
-
-def _list_dbs(*args):
-    print("Available --db options (use --dburi to override)")
-    for macro in sorted(file_config.options('db')):
-        print("%20s\t%s" % (macro, file_config.get('db', macro)))
-    sys.exit(0)
-
-
-def _server_side_cursors(options, opt_str, value, parser):
-    db_opts['server_side_cursors'] = True
-
-
-pre_configure = []
-post_configure = []
-
-
-def pre(fn):
-    pre_configure.append(fn)
-    return fn
-
-
-def post(fn):
-    post_configure.append(fn)
-    return fn
-
-
-@pre
-def _setup_options(opt, file_config):
-    global options
-    options = opt
-
-
-@pre
-def _monkeypatch_cdecimal(options, file_config):
-    if options.cdecimal:
-        import cdecimal
-        sys.modules['decimal'] = cdecimal
-
-
-@post
-def _engine_uri(options, file_config):
-    from sqlalchemy.testing import engines, config
-    from sqlalchemy import testing
-
-    if options.dburi:
-        db_urls = list(options.dburi)
-    else:
-        db_urls = []
-
-    if options.db:
-        for db_token in options.db:
-            for db in re.split(r'[,\s]+', db_token):
-                if db not in file_config.options('db'):
-                    raise RuntimeError(
-                        "Unknown URI specifier '%s'.  Specify --dbs for known uris."
-                                % db)
-                else:
-                    db_urls.append(file_config.get('db', db))
-
-    if not db_urls:
-        db_urls.append(file_config.get('db', 'default'))
-
-    for db_url in db_urls:
-        eng = engines.testing_engine(db_url, db_opts)
-        eng.connect().close()
-        config.Config.register(eng, db_opts, options, file_config, testing)
-
-    config.db_opts = db_opts
-
-
-@post
-def _engine_pool(options, file_config):
-    if options.mockpool:
-        from sqlalchemy import pool
-        db_opts['poolclass'] = pool.AssertionPool
-
-@post
-def _prep_testing_database(options, file_config):
-    from sqlalchemy.testing import config
-    from sqlalchemy import schema, inspect
-
-    if options.dropfirst:
-        for e in config.Config.all_dbs():
-            inspector = inspect(e)
-
-            try:
-                view_names = inspector.get_view_names()
-            except NotImplementedError:
-                pass
-            else:
-                for vname in view_names:
-                    e.execute(schema._DropView(schema.Table(vname, schema.MetaData())))
-
-            try:
-                view_names = inspector.get_view_names(schema="test_schema")
-            except NotImplementedError:
-                pass
-            else:
-                for vname in view_names:
-                    e.execute(schema._DropView(
-                                schema.Table(vname,
-                                            schema.MetaData(), schema="test_schema")))
-
-            for tname in reversed(inspector.get_table_names(order_by="foreign_key")):
-                e.execute(schema.DropTable(schema.Table(tname, schema.MetaData())))
-
-            for tname in reversed(inspector.get_table_names(
-                                    order_by="foreign_key", schema="test_schema")):
-                e.execute(schema.DropTable(
-                    schema.Table(tname, schema.MetaData(), schema="test_schema")))
-
-
-@post
-def _set_table_options(options, file_config):
-    from sqlalchemy.testing import schema
-
-    table_options = schema.table_options
-    for spec in options.tableopts:
-        key, value = spec.split('=')
-        table_options[key] = value
-
-    if options.mysql_engine:
-        table_options['mysql_engine'] = options.mysql_engine
-
-
-@post
-def _reverse_topological(options, file_config):
-    if options.reversetop:
-        from sqlalchemy.orm.util import randomize_unitofwork
-        randomize_unitofwork()
-
-
-def _requirements_opt(options, opt_str, value, parser):
-    _setup_requirements(value)
-
-@post
-def _requirements(options, file_config):
-
-    requirement_cls = file_config.get('sqla_testing', "requirement_cls")
-    _setup_requirements(requirement_cls)
-
-def _setup_requirements(argument):
-    from sqlalchemy.testing import config
-    from sqlalchemy import testing
-
-    if config.requirements is not None:
-        return
-
-    modname, clsname = argument.split(":")
-
-    # importlib.import_module() only introduced in 2.7, a little
-    # late
-    mod = __import__(modname)
-    for component in modname.split(".")[1:]:
-        mod = getattr(mod, component)
-    req_cls = getattr(mod, clsname)
-
-    config.requirements = testing.requires = req_cls()
-
-@post
-def _post_setup_options(opt, file_config):
-    from sqlalchemy.testing import config
-    config.options = options
-    config.file_config = file_config
-
-
-@post
-def _setup_profiling(options, file_config):
-    from sqlalchemy.testing import profiling
-    profiling._profile_stats = profiling.ProfileStatsFile(
-                file_config.get('sqla_testing', 'profile_file'))
 
 
 class NoseSQLAlchemy(Plugin):
@@ -247,65 +34,27 @@ class NoseSQLAlchemy(Plugin):
     def options(self, parser, env=os.environ):
         Plugin.options(self, parser, env)
         opt = parser.add_option
-        opt("--log-info", action="callback", type="string", callback=_log,
-            help="turn on info logging for <LOG> (multiple OK)")
-        opt("--log-debug", action="callback", type="string", callback=_log,
-            help="turn on debug logging for <LOG> (multiple OK)")
-        opt("--db", action="append", type="string", dest="db",
-                    help="Use prefab database uri. Multiple OK, "
-                            "first one is run by default.")
-        opt('--dbs', action='callback', callback=_list_dbs,
-            help="List available prefab dbs")
-        opt("--dburi", action="append", type="string", dest="dburi",
-            help="Database uri.  Multiple OK, first one is run by default.")
-        opt("--dropfirst", action="store_true", dest="dropfirst",
-            help="Drop all tables in the target database first")
-        opt("--mockpool", action="store_true", dest="mockpool",
-            help="Use mock pool (asserts only one connection used)")
-        opt("--low-connections", action="store_true", dest="low_connections",
-            help="Use a low number of distinct connections - i.e. for Oracle TNS"
-        )
-        opt("--reversetop", action="store_true", dest="reversetop", default=False,
-            help="Use a random-ordering set implementation in the ORM (helps "
-                  "reveal dependency issues)")
-        opt("--requirements", action="callback", type="string",
-            callback=_requirements_opt,
-            help="requirements class for testing, overrides setup.cfg")
-        opt("--with-cdecimal", action="store_true", dest="cdecimal", default=False,
-            help="Monkeypatch the cdecimal library into Python 'decimal' for all tests")
-        opt("--serverside", action="callback", callback=_server_side_cursors,
-            help="Turn on server side cursors for PG")
-        opt("--mysql-engine", action="store", dest="mysql_engine", default=None,
-            help="Use the specified MySQL storage engine for all tables, default is "
-                 "a db-default/InnoDB combo.")
-        opt("--table-option", action="append", dest="tableopts", default=[],
-            help="Add a dialect-specific table option, key=value")
-        opt("--write-profiles", action="store_true", dest="write_profiles", default=False,
-                help="Write/update profiling data.")
-        global file_config
-        file_config = configparser.ConfigParser()
-        file_config.read(['setup.cfg', 'test.cfg'])
+
+        def make_option(name, **kw):
+            callback_ = kw.pop("callback", None)
+            if callback_:
+                def wrap_(option, opt_str, value, parser):
+                    callback_(opt_str, value, parser)
+                kw["callback"] = wrap_
+            opt(name, **kw)
+
+        plugin_base.setup_options(make_option)
+        plugin_base.read_config()
 
     def configure(self, options, conf):
         super(NoseSQLAlchemy, self).configure(options, conf)
-        self.options = options
-        for fn in pre_configure:
-            fn(self.options, file_config)
+        plugin_base.pre_begin(options)
+
+        global fixtures
+        from sqlalchemy.testing import fixtures
 
     def begin(self):
-        # Lazy setup of other options (post coverage)
-        for fn in post_configure:
-            fn(self.options, file_config)
-
-        # late imports, has to happen after config as well
-        # as nose plugins like coverage
-        global util, fixtures, engines, exclusions, \
-                        assertions, warnings, profiling,\
-                        config, testing
-        from sqlalchemy import testing
-        from sqlalchemy.testing import fixtures, engines, exclusions, \
-                        assertions, warnings, profiling, config
-        from sqlalchemy import util
+        plugin_base.post_begin()
 
     def describeTest(self, test):
         return ""
@@ -330,188 +79,27 @@ class NoseSQLAlchemy(Plugin):
             return False
         elif cls.__name__.startswith('_'):
             return False
-        elif getattr(cls, '__multiple__', False):
-            return False
         else:
             return True
 
-    def dont_loadTestsFromName(self, name, module):
-        if module:
-            testcls = getattr(module, name)
-            if isinstance(testcls, type) and \
-                issubclass(testcls, fixtures.TestBase) and \
-                getattr(testcls, '__multiple__', False):
-
-                from nose.loader import TestLoader
-                from nose.util import transplant_class
-                loader = TestLoader(self.conf)
-                testcls = transplant_class(testcls, module.__name__)
-
-                for cfg in config.Config.all_configs():
-                    cls = type(
-                        "%s_%s_%s" % (testcls.__name__, cfg.db.name, cfg.db.driver),
-                        (testcls, ),
-                        {"__only_on__": (cfg.db.name, cfg.db.driver), "__multiple__": False}
-                    )
-                    for tst in loader.loadTestsFromTestClass(cls):
-                        yield tst
-
-
-    def dont_beforeImport(self, filename, module):
-        import pdb
-        pdb.set_trace()
-        for testcls in dir(module):
-            if isinstance(testcls, type) and \
-                issubclass(testcls, fixtures.TestBase) and \
-                getattr(testcls, '__multiple__', False):
-                for cfg in config.Config.all_configs():
-                    name = "%s_%s_%s" % (testcls.__name__, cfg.db.name, cfg.db.driver)
-                    cls = type(
-                        name,
-                        (testcls, ),
-                        {"__only_on__": (cfg.db.name, cfg.db.driver), "__multiple__": False}
-                    )
-                    #setattr(module, name, cls)
-                    yield cls
-
-    def dont_loadTestsFromModule(self, module, path=None):
-        for testcls in dir(module):
-            if isinstance(testcls, type) and \
-                issubclass(testcls, fixtures.TestBase) and \
-                getattr(testcls, '__multiple__', False):
-                for cfg in config.Config.all_configs():
-                    cls = type(
-                        "%s_%s_%s" % (testcls.__name__, cfg.db.name, cfg.db.driver),
-                        (testcls, ),
-                        {"__only_on__": (cfg.db.name, cfg.db.driver), "__multiple__": False}
-                    )
-                    yield cls
-
-                #yield testcls
-
-    def dont_makeTest(self, obj, parent):
-        if hasattr(obj, "__multiple__"):
-            from nose.loader import TestLoader
-            from nose.util import transplant_class
-            loader = TestLoader(self.conf)
-            obj = transplant_class(obj, parent.__name__)
-            def load():
-
-                for cfg in config.Config.all_configs():
-                    cls = type(
-                        "%s_%s_%s" % (obj.__name__, cfg.db.name, cfg.db.driver),
-                        (obj, ),
-                        {"__only_on__": (cfg.db.name, cfg.db.driver), "__multiple__": False}
-                    )
-
-                    for tst in loader.loadTestsFromTestClass(cls):
-                        import pdb
-                        pdb.set_trace()
-                        yield tst
-            return load()
-        else:
-            return None
-
-    def _do_skips(self, cls):
-
-        all_configs = set(config.Config.all_configs())
-        reasons = []
-
-        if hasattr(cls, '__requires__'):
-            requirements = config.requirements
-            for config_obj in list(all_configs):
-                for requirement in cls.__requires__:
-                    check = getattr(requirements, requirement)
-
-                    if check.predicate(config_obj):
-                        all_configs.remove(config_obj)
-                        if check.reason:
-                            reasons.append(check.reason)
-                        break
-
-        if cls.__unsupported_on__:
-            spec = exclusions.db_spec(*cls.__unsupported_on__)
-            for config_obj in list(all_configs):
-                if spec(config_obj):
-                    all_configs.remove(config_obj)
-
-        if getattr(cls, '__only_on__', None):
-            spec = exclusions.db_spec(*util.to_list(cls.__only_on__))
-            for config_obj in list(all_configs):
-                if not spec(config_obj):
-                    all_configs.remove(config_obj)
-
-
-        if getattr(cls, '__skip_if__', False):
-            for c in getattr(cls, '__skip_if__'):
-                if c():
-                    raise SkipTest("'%s' skipped by %s" % (
-                        cls.__name__, c.__name__)
-                    )
-
-        for db_spec, op, spec in getattr(cls, '__excluded_on__', ()):
-            for config_obj in list(all_configs):
-                if exclusions.skip_if(
-                        exclusions.SpecPredicate(db_spec, op, spec)
-                        ).predicate(config_obj):
-                    all_configs.remove(config_obj)
-
-
-        if not all_configs:
-            raise SkipTest(
-                "'%s' unsupported on DB implementation %s%s" % (
-                    cls.__name__,
-                    ", ".join("'%s' = %s" % (
-                                    config_obj.db.name,
-                                    config_obj.db.dialect.server_version_info)
-                        for config_obj in config.Config.all_configs()
-                    ),
-                    ", ".join(reasons)
-                )
-            )
-        elif hasattr(cls, '__prefer__'):
-            non_preferred = set()
-            spec = exclusions.db_spec(*util.to_list(cls.__prefer__))
-            for config_obj in all_configs:
-                if not spec(config_obj):
-                    non_preferred.add(config_obj)
-            if all_configs.difference(non_preferred):
-                all_configs.difference_update(non_preferred)
-
-        if config._current not in all_configs:
-            self._setup_config(all_configs.pop(), cls)
 
     def beforeTest(self, test):
-        warnings.resetwarnings()
-        profiling._current_test = test.id()
+        plugin_base.before_test(test)
 
     def afterTest(self, test):
-        engines.testing_reaper._after_test_ctx()
-        warnings.resetwarnings()
-
-    def _setup_config(self, config_obj, ctx):
-        config._current.push(config_obj, testing)
-
-    def _setup_engine(self, ctx):
-        if getattr(ctx, '__engine_options__', None):
-            eng = engines.testing_engine(options=ctx.__engine_options__)
-            config._current.push_engine(eng, testing)
-
-    def _restore_engine(self, ctx):
-        config._current.reset(testing)
+        plugin_base.after_test(test)
 
     def startContext(self, ctx):
         if not isinstance(ctx, type) \
             or not issubclass(ctx, fixtures.TestBase):
             return
-        self._do_skips(ctx)
-        self._setup_engine(ctx)
+        try:
+            plugin_base.start_test_class(ctx)
+        except plugin_base.GenericSkip as gs:
+            raise SkipTest(gs.message)
 
     def stopContext(self, ctx):
         if not isinstance(ctx, type) \
             or not issubclass(ctx, fixtures.TestBase):
             return
-        engines.testing_reaper._stop_test_ctx()
-        if not options.low_connections:
-            assertions.global_cleanup_assertions()
-        self._restore_engine(ctx)
+        plugin_base.stop_test_class(ctx)
