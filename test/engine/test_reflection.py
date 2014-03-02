@@ -1120,12 +1120,6 @@ class SchemaManipulationTest(fixtures.TestBase):
 class UnicodeReflectionTest(fixtures.TestBase):
     @classmethod
     def setup_class(cls):
-        # trigger mysql _server_casing check...
-        testing.db.connect().close()
-
-        cls.bind = bind = engines.utf8_engine(
-                            options={'convert_unicode': True})
-
         cls.metadata = metadata = MetaData()
 
         no_multibyte_period = set([
@@ -1170,18 +1164,17 @@ class UnicodeReflectionTest(fixtures.TestBase):
                   )
             schema.Index(ixname, t.c[cname])
 
-        metadata.create_all(bind)
+        metadata.create_all(testing.db)
         cls.names = names
 
     @classmethod
     def teardown_class(cls):
-        cls.metadata.drop_all(cls.bind, checkfirst=False)
-        cls.bind.dispose()
+        cls.metadata.drop_all(testing.db, checkfirst=False)
 
     @testing.requires.unicode_connections
     def test_has_table(self):
         for tname, cname, ixname in self.names:
-            assert self.bind.has_table(tname), "Can't detect name %s" % tname
+            assert testing.db.has_table(tname), "Can't detect name %s" % tname
 
     @testing.requires.unicode_connections
     def test_basic(self):
@@ -1190,7 +1183,7 @@ class UnicodeReflectionTest(fixtures.TestBase):
         # (others?) expect non-unicode strings in result sets/bind
         # params
 
-        bind = self.bind
+        bind = testing.db
         names = set([rec[0] for rec in self.names])
 
         reflected = set(bind.table_names())
@@ -1217,7 +1210,7 @@ class UnicodeReflectionTest(fixtures.TestBase):
 
     @testing.requires.unicode_connections
     def test_get_names(self):
-        inspector = inspect(self.bind)
+        inspector = inspect(testing.db)
         names = dict(
             (tname, (cname, ixname)) for tname, cname, ixname in self.names
         )

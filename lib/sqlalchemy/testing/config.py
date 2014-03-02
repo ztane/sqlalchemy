@@ -9,10 +9,10 @@ import collections
 requirements = None
 db = None
 db_url = None
-dbs = {}
 db_opts = None
-_current = None
 file_config = None
+
+_current = None
 
 class Config(object):
     def __init__(self, db, db_opts, options, file_config):
@@ -22,6 +22,7 @@ class Config(object):
         self.file_config = file_config
 
     _stack = collections.deque()
+    _configs = {}
 
     @classmethod
     def register(cls, db, db_opts, options, file_config, namespace):
@@ -35,9 +36,9 @@ class Config(object):
         global _current
         if not _current:
             cls.set_as_current(cfg, namespace)
-        dbs[cfg.db.name] = cfg
-        dbs[(cfg.db.name, cfg.db.dialect)] = cfg
-        dbs[cfg.db] = cfg
+        cls._configs[cfg.db.name] = cfg
+        cls._configs[(cfg.db.name, cfg.db.dialect)] = cfg
+        cls._configs[cfg.db] = cfg
 
     @classmethod
     def set_as_current(cls, config, namespace):
@@ -65,5 +66,12 @@ class Config(object):
             cls.set_as_current(cls._stack[0], namespace)
             cls._stack.clear()
 
-def _unique_configs():
-    return set(dbs.values())
+    @classmethod
+    def all_configs(cls):
+        for cfg in set(cls._configs.values()):
+            yield cfg
+
+    @classmethod
+    def all_dbs(cls):
+        for cfg in cls.all_configs():
+            yield cfg.db

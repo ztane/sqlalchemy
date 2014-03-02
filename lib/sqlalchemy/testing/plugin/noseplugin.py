@@ -144,7 +144,7 @@ def _prep_testing_database(options, file_config):
     from sqlalchemy import schema, inspect
 
     if options.dropfirst:
-        for e in set(config.dbs.values()):
+        for e in config.Config.all_dbs():
             inspector = inspect(e)
 
             try:
@@ -334,9 +334,8 @@ class NoseSQLAlchemy(Plugin):
             return True
 
     def _do_skips(self, cls):
-        from sqlalchemy.testing import config
 
-        all_configs = set(config._unique_configs())
+        all_configs = set(config.Config.all_configs())
         reasons = []
 
         if hasattr(cls, '__requires__'):
