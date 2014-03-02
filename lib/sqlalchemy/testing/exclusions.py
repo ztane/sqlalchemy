@@ -348,6 +348,7 @@ def exclude(db, op, spec, reason=None):
 
 
 def against(config, *queries):
+    assert queries, "no queries sent!"
     return OrPredicate([
                 Predicate.as_predicate(query)
                 for query in queries

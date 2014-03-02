@@ -403,7 +403,7 @@ class DefaultRequirements(SuiteRequirements):
     @property
     def sane_rowcount(self):
         return skip_if(
-            lambda: not self.db.dialect.supports_sane_rowcount,
+            lambda config: not config.db.dialect.supports_sane_rowcount,
             "driver doesn't support 'sane' rowcount"
         )
 
@@ -443,7 +443,7 @@ class DefaultRequirements(SuiteRequirements):
     @property
     def sane_multi_rowcount(self):
         return skip_if(
-                    lambda: not self.db.dialect.supports_sane_multi_rowcount,
+                    lambda config: not config.db.dialect.supports_sane_multi_rowcount,
                     "driver doesn't support 'sane' multi row count"
                 )
 
@@ -698,7 +698,7 @@ class DefaultRequirements(SuiteRequirements):
         as not present.
 
         """
-        return skip_if(lambda: self.config.options.low_connections)
+        return skip_if(lambda config: config.options.low_connections)
 
     @property
     def skip_mysql_on_windows(self):
@@ -715,8 +715,8 @@ class DefaultRequirements(SuiteRequirements):
 
         """
         return skip_if(
-                lambda: util.py3k and
-                    self.config.options.enable_plugin_coverage,
+                lambda config: util.py3k and
+                    config.options.enable_plugin_coverage,
                 "Stability issues with coverage + py3k"
             )
 
@@ -740,11 +740,15 @@ class DefaultRequirements(SuiteRequirements):
         except ImportError:
             return False
 
+    @property
+    def mysql_fully_case_sensitive(self):
+        return only_if(self._has_mysql_fully_case_sensitive)
+
     def _has_mysql_on_windows(self, config):
-        return against(config.db, 'mysql') and \
-                self.db.dialect._detect_casing(self.db) == 1
+        return against(config, 'mysql') and \
+                config.db.dialect._detect_casing(config.db) == 1
 
     def _has_mysql_fully_case_sensitive(self, config):
-        return against(config.db, 'mysql') and \
+        return against(config, 'mysql') and \
                 config.db.dialect._detect_casing(config.db) == 0
 

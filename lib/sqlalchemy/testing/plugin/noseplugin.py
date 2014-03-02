@@ -20,6 +20,7 @@ from __future__ import absolute_import
 
 import os
 import sys
+import re
 py3k = sys.version_info >= (3, 0)
 
 if py3k:
@@ -48,15 +49,7 @@ file_config = None
 logging = None
 db_opts = {}
 options = None
-_existing_config_obj = None
 
-
-class Config(object):
-    def __init__(self, db, db_opts, options, file_config):
-        self.db = db
-        self.db_opts = db_opts
-        self.options = options
-        self.file_config = file_config
 
 def _log(option, opt_str, value, parser):
     global logging
@@ -119,13 +112,14 @@ def _engine_uri(options, file_config):
         db_urls = []
 
     if options.db:
-        for db in options.db:
-            if db not in file_config.options('db'):
-                raise RuntimeError(
-                    "Unknown URI specifier '%s'.  Specify --dbs for known uris."
-                            % db)
-            else:
-                db_urls.append(file_config.get('db', db))
+        for db_token in options.db:
+            for db in re.split(r'[,\s]+', db_token):
+                if db not in file_config.options('db'):
+                    raise RuntimeError(
+                        "Unknown URI specifier '%s'.  Specify --dbs for known uris."
+                                % db)
+                else:
+                    db_urls.append(file_config.get('db', db))
 
     if not db_urls:
         db_urls.append(file_config.get('db', 'default'))
@@ -133,13 +127,7 @@ def _engine_uri(options, file_config):
     for db_url in db_urls:
         eng = engines.testing_engine(db_url, db_opts)
         eng.connect().close()
-        config_obj = Config(eng, db_opts, options, file_config)
-        if not config.db:
-            config.db = testing.db = eng
-            config._current = config_obj
-        config.dbs[eng.name] = config_obj
-        config.dbs[(eng.name, eng.dialect)] = config_obj
-        config.dbs[eng] = config_obj
+        config.Config.register(eng, db_opts, options, file_config, testing)
 
     config.db_opts = db_opts
 
@@ -385,7 +373,9 @@ class NoseSQLAlchemy(Plugin):
 
         for db_spec, op, spec in getattr(cls, '__excluded_on__', ()):
             for config_obj in list(all_configs):
-                if exclusions.skip_if(exclusions.SpecPredicate(db_spec, op, spec)).predicate(config_obj):
+                if exclusions.skip_if(
+                        exclusions.SpecPredicate(db_spec, op, spec)
+                        ).predicate(config_obj):
                     all_configs.remove(config_obj)
 
 
@@ -393,7 +383,9 @@ class NoseSQLAlchemy(Plugin):
             raise SkipTest(
                 "'%s' unsupported on DB implementation %s%s" % (
                     cls.__name__,
-                    ", ".join("'%s' = %s" % (config_obj.db.name, config_obj.db.dialect.server_version_info)
+                    ", ".join("'%s' = %s" % (
+                                    config_obj.db.name,
+                                    config_obj.db.dialect.server_version_info)
                         for config_obj in config._unique_configs()
                     ),
                     ", ".join(reasons)
@@ -420,29 +412,15 @@ class NoseSQLAlchemy(Plugin):
         warnings.resetwarnings()
 
     def _setup_config(self, config_obj, ctx):
-        ctx.__use_config__ = config_obj
+        config._current.push(config_obj, testing)
 
     def _setup_engine(self, ctx):
         if getattr(ctx, '__engine_options__', None):
             eng = engines.testing_engine(options=ctx.__engine_options__)
-            config_obj = Config(eng, db_opts, options, file_config)
-        elif getattr(ctx, '__use_config__', None):
-            config_obj = ctx.__use_config__
-        else:
-            config_obj = None
-
-        if config_obj:
-            global _existing_config_obj
-            _existing_config_obj = config._current
-            config._current = config_obj
-            config.db = testing.db = config_obj.db
+            config._current.push_engine(eng)
 
     def _restore_engine(self, ctx):
-        global _existing_config_obj
-        if _existing_config_obj is not None:
-            config.db = testing.db = _existing_config_obj.db
-            config._current = _existing_config_obj
-            _existing_config_obj = None
+        config._current.reset(testing)
 
     def startContext(self, ctx):
         if not isinstance(ctx, type) \

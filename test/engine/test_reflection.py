@@ -1152,7 +1152,7 @@ class UnicodeReflectionTest(fixtures.TestBase):
             names = no_multibyte_period
         # mysql can't handle casing usually
         elif testing.against("mysql") and \
-                not testing.requires._has_mysql_fully_case_sensitive():
+                not testing.requires.mysql_fully_case_sensitive.enabled:
             names = no_multibyte_period.union(no_case_sensitivity)
         # mssql + pyodbc + freetds can't compare multibyte names to
         # information_schema.tables.table_name
