@@ -25,6 +25,10 @@ class skip_if(object):
             return other(self(fn))
         return decorate
 
+    @property
+    def enabled(self):
+        return not self.predicate(config._current)
+
     @contextlib.contextmanager
     def fail_if(self, name='block'):
         try:
@@ -202,7 +206,7 @@ class LambdaPredicate(Predicate):
     def __init__(self, lambda_, description=None, args=None, kw=None):
         spec = inspect.getargspec(lambda_)
         if not spec[0]:
-            self.lambda_ = lambda db: lambda_
+            self.lambda_ = lambda db: lambda_()
         else:
             self.lambda_ = lambda_
         self.args = args or ()
@@ -313,7 +317,7 @@ def closed():
 
 
 @decorator
-def future(fn):
+def future(fn, *arg):
     return fails_if(LambdaPredicate(fn), "Future feature")
 
 

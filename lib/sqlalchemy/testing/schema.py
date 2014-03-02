@@ -66,7 +66,7 @@ def Column(*args, **kw):
     test_opts = dict([(k, kw.pop(k)) for k in list(kw)
                       if k.startswith('test_')])
 
-    if not config.requirements.foreign_key_ddl.enabled:
+    if config.requirements.foreign_key_ddl.predicate(config):
         args = [arg for arg in args if not isinstance(arg, schema.ForeignKey)]
 
     col = schema.Column(*args, **kw)
@@ -78,7 +78,7 @@ def Column(*args, **kw):
 
         # hardcoded rule for firebird, oracle; this should
         # be moved out
-        if exclusions.against('firebird', 'oracle'):
+        if exclusions.against(config, 'firebird', 'oracle'):
             def add_seq(c, tbl):
                 c._init_items(
                     schema.Sequence(_truncate_name(
