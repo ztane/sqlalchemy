@@ -128,29 +128,3 @@ class UnicodeSchemaTest(fixtures.TestBase):
                 "Column('\\u6e2c\\u8a66_id', Integer(), table=<\u6e2c\u8a66>), "
                 "schema=None)"))
 
-class EscapesDefaultsTest(fixtures.TestBase):
-    def test_default_exec(self):
-        metadata = MetaData(testing.db)
-        t1 = Table('t1', metadata,
-            Column('special_col', Integer, Sequence('special_col'), primary_key=True),
-            Column('data', String(50)) # to appease SQLite without DEFAULT VALUES
-            )
-        metadata.create_all()
-
-        try:
-            engine = metadata.bind
-
-            # reset the identifier preparer, so that we can force it to cache
-            # a unicode identifier
-            engine.dialect.identifier_preparer = engine.dialect.preparer(engine.dialect)
-            select([column('special_col')]).select_from(t1).execute().close()
-            assert isinstance(engine.dialect.identifier_preparer.format_sequence(Sequence('special_col')), str)
-
-            # now execute, run the sequence.  it should run in u"Special_col.nextid" or similar as
-            # a unicode object; cx_oracle asserts that this is None or a String (postgresql lets it pass thru).
-            # ensure that executioncontext._exec_default() is encoding.
-            t1.insert().execute(data='foo')
-        finally:
-            metadata.drop_all()
-
-
