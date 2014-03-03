@@ -159,7 +159,7 @@ class InsertBehaviorTest(fixtures.TablesTest):
         )
 
 class ReturningTest(fixtures.TablesTest):
-    run_deletes = 'each'
+    run_create_tables = 'each'
     __requires__ = 'returning', 'autoincrement_insert'
     __multiple__ = True
 

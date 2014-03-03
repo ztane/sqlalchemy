@@ -3,8 +3,6 @@ import argparse
 import inspect
 from . import plugin_base
 
-py_unittest = None
-
 def pytest_addoption(parser):
     group = parser.getgroup("sqlalchemy")
 
@@ -28,9 +26,6 @@ def pytest_configure(config):
 
     plugin_base.post_begin()
 
-    # because it feels icky importing from "_pytest"..
-    global py_unittest
-    py_unittest = config.pluginmanager.getplugin('unittest')
 
 import collections
 def pytest_collection_modifyitems(session, config, items):
@@ -38,20 +33,22 @@ def pytest_collection_modifyitems(session, config, items):
     # expand them out into per-database test cases.
 
     # this is much easier to do within pytest_pycollect_makeitem, however
-    # pytest is unfortunately iterating through cls.__dict__ as makeitem is
+    # pytest is iterating through cls.__dict__ as makeitem is
     # called which causes a "dictionary changed size" error on py3k.
     # I'd submit a pullreq for them to turn it into a list first, but
     # it's to suit the rather odd use case here which is that we are adding
     # new classes to a module on the fly.
 
     rebuilt_items = collections.defaultdict(list)
-
     test_classes = set(item.parent for item in items)
     for test_class in test_classes:
         for sub_cls in plugin_base.generate_sub_tests(test_class.cls, test_class.parent.module):
             if sub_cls is not test_class.cls:
-                rebuilt_items[test_class.cls].extend(py_unittest.UnitTestCase(
-                                    sub_cls.__name__, parent=test_class.parent).collect())
+                list_ = rebuilt_items[test_class.cls]
+
+                for inst in pytest.Class(sub_cls.__name__,
+                                parent=test_class.parent.parent).collect():
+                    list_.extend(inst.collect())
 
     newitems = []
     for item in items:
@@ -61,36 +58,49 @@ def pytest_collection_modifyitems(session, config, items):
         else:
             newitems.append(item)
 
-    items[:] = newitems
+    # seems like the functions attached to a test class aren't sorted already?
+    # is that true and why's that? (when using unittest, they're sorted)
+    items[:] = sorted(newitems, key=lambda item: (
+                                        item.parent.parent.parent.name,
+                                        item.parent.parent.name,
+                                        item.name
+                                    )
+                        )
+
 
 def pytest_pycollect_makeitem(collector, name, obj):
+    # how come if I catch "Module" objects here directly
+    # and return [] for those I don't want,
+    # that doesn't seem to change the results?  I need to filter
+    # modules after I get the individual functions...
+
     if inspect.isclass(obj) and plugin_base.want_class(obj):
-        return py_unittest.UnitTestCase(name, parent=collector)
+        return pytest.Class(name, parent=collector)
+    elif inspect.isfunction(obj) and \
+            name.startswith("test_") and \
+            isinstance(collector, pytest.Instance):
+        return pytest.Function(name, parent=collector)
     else:
         return []
 
 _current_class = None
 
 def pytest_runtest_setup(item):
-    # I'd like to get module/class/test level calls here
-    # but I don't quite see the pattern.
-
-    # not really sure what determines if we're called
-    # here with pytest.Class, pytest.Module, does not seem to be
-    # consistent
-
+    # here we seem to get called only based on what we collected
+    # in pytest_collection_modifyitems.   So to do class-based stuff
+    # we have to tear that out.
     global _current_class
 
     # ... so we're doing a little dance here to figure it out...
-    if item.parent is not _current_class:
+    if item.parent.parent is not _current_class:
 
-        class_setup(item.parent)
-        _current_class = item.parent
+        class_setup(item.parent.parent)
+        _current_class = item.parent.parent
 
         # this is needed for the class-level, to ensure that the
         # teardown runs after the class is completed with its own
         # class-level teardown...
-        item.parent.addfinalizer(lambda: class_teardown(item.parent))
+        item.parent.parent.addfinalizer(lambda: class_teardown(item.parent.parent))
 
     test_setup(item)
 
