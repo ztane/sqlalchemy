@@ -64,21 +64,7 @@ class NoseSQLAlchemy(Plugin):
             return False
 
     def wantClass(self, cls):
-        """Return true if you want the main test selector to collect
-        tests from this class, false if you don't, and None if you don't
-        care.
-
-        :Parameters:
-           cls : class
-             The class being examined by the selector
-
-        """
-        if not issubclass(cls, fixtures.TestBase):
-            return False
-        elif cls.__name__.startswith('_'):
-            return False
-        else:
-            return True
+        return plugin_base.want_class(cls)
 
     def beforeTest(self, test):
         plugin_base.before_test(test, test.id())

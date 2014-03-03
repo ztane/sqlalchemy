@@ -1,9 +1,7 @@
 import pytest
 import argparse
-
-import os
-fixtures = None
-
+import inspect
+py_unittest = None
 from . import plugin_base
 
 def pytest_addoption(parser):
@@ -25,21 +23,18 @@ def pytest_addoption(parser):
 def pytest_configure(config):
     plugin_base.pre_begin(config.option)
     plugin_base.post_begin()
-    global fixtures
-    from sqlalchemy.testing import fixtures
 
+    # because it feels icky importing from "_pytest"..
+    global py_unittest
+    py_unittest = config.pluginmanager.getplugin('unittest')
 
-def pytest_collection_modifyitems(session, config, items):
-    items[:] = [
-        item for item in items if
-        isinstance(item.cls, type) and issubclass(item.cls, fixtures.TestBase)
-        and not item.cls.__name__.startswith("_")
-    ]
 
 def pytest_pycollect_makeitem(collector, name, obj):
-    # TODO: this would be nicer?  no clue what to
-    # return here
-    return None
+    if inspect.isclass(obj) and plugin_base.want_class(obj):
+        return [
+            py_unittest.UnitTestCase(sub_obj.__name__, parent=collector)
+            for sub_obj in plugin_base.generate_sub_tests(obj, collector.module)
+        ]
 
 _current_class = None
 
@@ -52,8 +47,6 @@ def pytest_runtest_setup(item):
     # here with pytest.Class, pytest.Module, does not seem to be
     # consistent
 
-    if not isinstance(item, Item):
-        return
     global _current_class
 
     # ... so we're doing a little dance here to figure it out...
@@ -63,14 +56,8 @@ def pytest_runtest_setup(item):
         _current_class = item.parent
         item.parent.addfinalizer(lambda: class_teardown(item.parent))
 
+    item.addfinalizer(lambda: test_teardown(item))
     test_setup(item)
-
-def pytest_runtest_teardown(item, nextitem):
-    if not isinstance(item, Item):
-        return
-
-    test_teardown(item)
-
 
 def test_setup(item):
     id_ = "%s.%s:%s" % (item.parent.module.__name__, item.parent.name, item.name)
@@ -83,6 +70,7 @@ def class_setup(item):
     try:
         plugin_base.start_test_class(item.cls)
     except plugin_base.GenericSkip as gs:
+        print(gs.message)
         pytest.skip(gs.message)
 
 def class_teardown(item):

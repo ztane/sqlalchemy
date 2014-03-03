@@ -295,6 +295,31 @@ def _setup_profiling(options, file_config):
                 file_config.get('sqla_testing', 'profile_file'))
 
 
+def want_class(cls):
+    if not issubclass(cls, fixtures.TestBase):
+        return False
+    elif cls.__name__.startswith('_'):
+        return False
+    else:
+        return True
+
+def generate_sub_tests(cls, module):
+    if getattr(cls, '__multiple__', False):
+        for cfg in config.Config.all_configs():
+            name = "%s_%s_%s" % (cls.__name__, cfg.db.name, cfg.db.driver)
+            subcls = type(
+                        name,
+                        (cls, ),
+                        {
+                            "__only_on__": (cfg.db.name, cfg.db.driver),
+                            "__multiple__": False}
+                        )
+            setattr(module, name, subcls)
+            yield subcls
+    else:
+        yield cls
+
+
 def start_test_class(cls):
     _do_skips(cls)
     _setup_engine(cls)
