@@ -4,13 +4,7 @@ import argparse
 import os
 fixtures = None
 
-
-# no package imports yet!  this prevents us from tripping coverage
-# too soon.
-import imp
-path = os.path.join(os.path.dirname(__file__), "plugin_base.py")
-plugin_base = imp.load_source("plugin_base", path)
-
+from . import plugin_base
 
 def pytest_addoption(parser):
     group = parser.getgroup("sqlalchemy")
