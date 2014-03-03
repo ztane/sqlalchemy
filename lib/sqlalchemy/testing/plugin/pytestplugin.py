@@ -42,7 +42,7 @@ def pytest_collection_modifyitems(session, config, items):
     # called which causes a "dictionary changed size" error on py3k.
     # I'd submit a pullreq for them to turn it into a list first, but
     # it's to suit the rather odd use case here which is that we are adding
-    # new classes to a module on the flt.
+    # new classes to a module on the fly.
 
     rebuilt_items = collections.defaultdict(list)
 
@@ -56,8 +56,6 @@ def pytest_collection_modifyitems(session, config, items):
     newitems = []
     for item in items:
         if item.parent.cls in rebuilt_items:
-            #import pdb
-            #pdb.set_trace()
             newitems.extend(rebuilt_items[item.parent.cls])
             rebuilt_items[item.parent.cls][:] = []
         else:
@@ -68,10 +66,6 @@ def pytest_collection_modifyitems(session, config, items):
 def pytest_pycollect_makeitem(collector, name, obj):
     if inspect.isclass(obj) and plugin_base.want_class(obj):
         return py_unittest.UnitTestCase(name, parent=collector)
-        return [
-            py_unittest.UnitTestCase(sub_obj.__name__, parent=collector)
-            for sub_obj in plugin_base.generate_sub_tests(obj, collector.module)
-        ]
     else:
         return []
 
