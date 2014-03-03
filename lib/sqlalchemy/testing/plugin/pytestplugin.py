@@ -29,13 +29,48 @@ def pytest_configure(config):
     global py_unittest
     py_unittest = config.pluginmanager.getplugin('unittest')
 
+import collections
+def pytest_collection_modifyitems(session, config, items):
+    # look for all those classes that specify __multiple__ and
+    # expand them out into per-database test cases.
+
+    # this is much easier to do within pytest_pycollect_makeitem, however
+    # pytest is unfortunately iterating through cls.__dict__ as makeitem is
+    # called which causes a "dictionary changed size" error on py3k.
+    # I'd submit a pullreq for them to turn it into a list first, but
+    # it's to suit the rather odd use case here which is that we are adding
+    # new classes to a module on the flt.
+
+    rebuilt_items = collections.defaultdict(list)
+
+    test_classes = set(item.parent for item in items)
+    for test_class in test_classes:
+        for sub_cls in plugin_base.generate_sub_tests(test_class.cls, test_class.parent.module):
+            if sub_cls is not test_class.cls:
+                rebuilt_items[test_class.cls].extend(py_unittest.UnitTestCase(
+                                    sub_cls.__name__, parent=test_class.parent).collect())
+
+    newitems = []
+    for item in items:
+        if item.parent.cls in rebuilt_items:
+            #import pdb
+            #pdb.set_trace()
+            newitems.extend(rebuilt_items[item.parent.cls])
+            rebuilt_items[item.parent.cls][:] = []
+        else:
+            newitems.append(item)
+
+    items[:] = newitems
 
 def pytest_pycollect_makeitem(collector, name, obj):
     if inspect.isclass(obj) and plugin_base.want_class(obj):
+        return py_unittest.UnitTestCase(name, parent=collector)
         return [
             py_unittest.UnitTestCase(sub_obj.__name__, parent=collector)
             for sub_obj in plugin_base.generate_sub_tests(obj, collector.module)
         ]
+    else:
+        return []
 
 _current_class = None
 
@@ -80,8 +115,8 @@ def class_setup(item):
     try:
         plugin_base.start_test_class(item.cls)
     except plugin_base.GenericSkip as gs:
-        print(gs.message)
-        pytest.skip(gs.message)
+        print(gs)
+        pytest.skip(str(gs))
 
 def class_teardown(item):
     plugin_base.stop_test_class(item.cls)

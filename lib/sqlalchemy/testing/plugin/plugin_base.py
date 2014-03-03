@@ -352,9 +352,6 @@ def after_test(test):
     warnings.resetwarnings()
 
 def _do_skips(cls):
-    if cls is None:
-        import pdb
-        pdb.set_trace()
     all_configs = set(config.Config.all_configs())
     reasons = []
 

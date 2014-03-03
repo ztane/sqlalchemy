@@ -15,6 +15,7 @@ import os
 
 from nose.plugins import Plugin
 from nose import SkipTest
+fixtures = None
 
 # no package imports yet!  this prevents us from tripping coverage
 # too soon.

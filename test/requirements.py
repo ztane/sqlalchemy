@@ -714,6 +714,7 @@ class DefaultRequirements(SuiteRequirements):
         issues have been observed with coverage + python 3.3
 
         """
+        # TODO: framework-agnostic "is coverage running?"
         return skip_if(
                 lambda config: util.py3k and
                     config.options.enable_plugin_coverage,
