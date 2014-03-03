@@ -23,6 +23,9 @@ def pytest_addoption(parser):
 
 def pytest_configure(config):
     plugin_base.pre_begin(config.option)
+
+    plugin_base.set_coverage_flag(bool(getattr(config.option, "cov_source", False)))
+
     plugin_base.post_begin()
 
     # because it feels icky importing from "_pytest"..

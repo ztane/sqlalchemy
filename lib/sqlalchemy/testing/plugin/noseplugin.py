@@ -49,6 +49,8 @@ class NoseSQLAlchemy(Plugin):
         super(NoseSQLAlchemy, self).configure(options, conf)
         plugin_base.pre_begin(options)
 
+        plugin_base.set_coverage_flag(options.enable_plugin_coverage)
+
         global fixtures
         from sqlalchemy.testing import fixtures
 

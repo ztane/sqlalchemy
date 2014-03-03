@@ -92,6 +92,9 @@ def pre_begin(opt):
     for fn in pre_configure:
         fn(options, file_config)
 
+def set_coverage_flag(value):
+    options.has_coverage = value
+
 def post_begin():
     """things to set up later, once we know coverage is running."""
     # Lazy setup of other options (post coverage)
