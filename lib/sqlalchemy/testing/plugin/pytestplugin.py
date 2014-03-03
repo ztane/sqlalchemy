@@ -2,6 +2,7 @@ import pytest
 import argparse
 import inspect
 from . import plugin_base
+import collections
 
 def pytest_addoption(parser):
     group = parser.getgroup("sqlalchemy")
@@ -27,7 +28,6 @@ def pytest_configure(config):
     plugin_base.post_begin()
 
 
-import collections
 def pytest_collection_modifyitems(session, config, items):
     # look for all those classes that specify __multiple__ and
     # expand them out into per-database test cases.
@@ -68,11 +68,8 @@ def pytest_collection_modifyitems(session, config, items):
                         )
 
 
+
 def pytest_pycollect_makeitem(collector, name, obj):
-    # how come if I catch "Module" objects here directly
-    # and return [] for those I don't want,
-    # that doesn't seem to change the results?  I need to filter
-    # modules after I get the individual functions...
 
     if inspect.isclass(obj) and plugin_base.want_class(obj):
         return pytest.Class(name, parent=collector)
