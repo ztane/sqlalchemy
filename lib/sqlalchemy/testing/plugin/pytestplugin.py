@@ -88,6 +88,9 @@ def pytest_runtest_setup(item):
     # we have to tear that out.
     global _current_class
 
+    if not isinstance(item, pytest.Function):
+        return
+
     # ... so we're doing a little dance here to figure it out...
     if item.parent.parent is not _current_class:
 
@@ -116,11 +119,7 @@ def test_teardown(item):
     plugin_base.after_test(item)
 
 def class_setup(item):
-    try:
-        plugin_base.start_test_class(item.cls)
-    except plugin_base.GenericSkip as gs:
-        print(gs)
-        pytest.skip(str(gs))
+    plugin_base.start_test_class(item.cls)
 
 def class_teardown(item):
     plugin_base.stop_test_class(item.cls)

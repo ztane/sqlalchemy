@@ -13,7 +13,7 @@ via py.test.
 """
 
 from __future__ import absolute_import
-
+from unittest import SkipTest
 import sys
 import re
 
@@ -110,9 +110,6 @@ def post_begin():
     from sqlalchemy.testing import fixtures, engines, exclusions, \
                     assertions, warnings, profiling, config
     from sqlalchemy import util
-
-class GenericSkip(Exception):
-    pass
 
 
 def _log(opt_str, value, parser):
@@ -287,8 +284,6 @@ def _reverse_topological(options, file_config):
         randomize_unitofwork()
 
 
-
-
 @post
 def _post_setup_options(opt, file_config):
     from sqlalchemy.testing import config
@@ -386,7 +381,7 @@ def _do_skips(cls):
     if getattr(cls, '__skip_if__', False):
         for c in getattr(cls, '__skip_if__'):
             if c():
-                raise GenericSkip("'%s' skipped by %s" % (
+                raise SkipTest("'%s' skipped by %s" % (
                     cls.__name__, c.__name__)
                 )
 
@@ -399,7 +394,7 @@ def _do_skips(cls):
 
 
     if not all_configs:
-        raise GenericSkip(
+        raise SkipTest(
             "'%s' unsupported on DB implementation %s%s" % (
                 cls.__name__,
                 ", ".join("'%s' = %s" % (

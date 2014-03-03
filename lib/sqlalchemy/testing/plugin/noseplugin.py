@@ -14,7 +14,6 @@ way (e.g. as a package-less import).
 import os
 
 from nose.plugins import Plugin
-from nose import SkipTest
 fixtures = None
 
 # no package imports yet!  this prevents us from tripping coverage
@@ -79,10 +78,7 @@ class NoseSQLAlchemy(Plugin):
         if not isinstance(ctx, type) \
             or not issubclass(ctx, fixtures.TestBase):
             return
-        try:
-            plugin_base.start_test_class(ctx)
-        except plugin_base.GenericSkip as gs:
-            raise SkipTest(gs.message)
+        plugin_base.start_test_class(ctx)
 
     def stopContext(self, ctx):
         if not isinstance(ctx, type) \
