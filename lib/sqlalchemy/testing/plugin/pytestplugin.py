@@ -39,6 +39,7 @@ def pytest_collection_modifyitems(session, config, items):
     items[:] = [
         item for item in items if
         isinstance(item.cls, type) and issubclass(item.cls, fixtures.TestBase)
+        and not item.cls.__name__.startswith("_")
     ]
 
 def pytest_pycollect_makeitem(collector, name, obj):
