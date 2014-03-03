@@ -4,6 +4,13 @@
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
 
+"""Testing extensions.
+
+this module is designed to work as a testing-framework-agnostic library,
+so that we can continue to support nose and also begin adding new functionality
+via py.test.
+
+"""
 
 from __future__ import absolute_import
 
@@ -306,16 +313,18 @@ def _setup_engine(cls):
         eng = engines.testing_engine(options=cls.__engine_options__)
         config._current.push_engine(eng, testing)
 
-def before_test(test):
+def before_test(test, id_):
     warnings.resetwarnings()
-    profiling._current_test = test.id()
+    profiling._current_test = id_
 
 def after_test(test):
     engines.testing_reaper._after_test_ctx()
     warnings.resetwarnings()
 
 def _do_skips(cls):
-
+    if cls is None:
+        import pdb
+        pdb.set_trace()
     all_configs = set(config.Config.all_configs())
     reasons = []
 
@@ -347,7 +356,7 @@ def _do_skips(cls):
     if getattr(cls, '__skip_if__', False):
         for c in getattr(cls, '__skip_if__'):
             if c():
-                raise SkipTest("'%s' skipped by %s" % (
+                raise GenericSkip("'%s' skipped by %s" % (
                     cls.__name__, c.__name__)
                 )
 

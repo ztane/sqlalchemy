@@ -16,16 +16,14 @@ import os
 from nose.plugins import Plugin
 from nose import SkipTest
 
+# no package imports yet!  this prevents us from tripping coverage
+# too soon.
 import imp
 path = os.path.join(os.path.dirname(__file__), "plugin_base.py")
 plugin_base = imp.load_source("plugin_base", path)
 
 
-
 class NoseSQLAlchemy(Plugin):
-    """
-    Handles the setup and extra properties required for testing SQLAlchemy
-    """
     enabled = True
 
     name = 'sqla_testing'
@@ -82,9 +80,8 @@ class NoseSQLAlchemy(Plugin):
         else:
             return True
 
-
     def beforeTest(self, test):
-        plugin_base.before_test(test)
+        plugin_base.before_test(test, test.id())
 
     def afterTest(self, test):
         plugin_base.after_test(test)

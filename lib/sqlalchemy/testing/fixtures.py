@@ -14,8 +14,9 @@ import sys
 import sqlalchemy as sa
 from sqlalchemy.ext.declarative import declarative_base, DeclarativeMeta
 
+import unittest
 
-class TestBase(object):
+class TestBase(unittest.TestCase):
     # A sequence of database names to always run, regardless of the
     # constraints below.
     __whitelist__ = ()
@@ -37,6 +38,13 @@ class TestBase(object):
     def assert_(self, val, msg=None):
         assert val, msg
 
+    def tearDown(self):
+        if hasattr(self, "teardown"):
+            self.teardown()
+
+    def setUp(self):
+        if hasattr(self, "setup"):
+            self.setup()
 
 class TablesTest(TestBase):
 
