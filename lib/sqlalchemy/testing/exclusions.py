@@ -27,7 +27,10 @@ class skip_if(object):
 
     @property
     def enabled(self):
-        return not self.predicate(config._current)
+        return self.enabled_for_config(config._current)
+
+    def enabled_for_config(self, config):
+        return not self.predicate(config)
 
     @contextlib.contextmanager
     def fail_if(self, name='block'):

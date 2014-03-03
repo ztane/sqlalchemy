@@ -86,12 +86,14 @@ def read_config():
     file_config.read(['setup.cfg', 'test.cfg'])
 
 def pre_begin(opt):
+    """things to set up early, before coverage might be setup."""
     global options
     options = opt
     for fn in pre_configure:
         fn(options, file_config)
 
 def post_begin():
+    """things to set up later, once we know coverage is running."""
     # Lazy setup of other options (post coverage)
     for fn in post_configure:
         fn(options, file_config)
@@ -201,14 +203,38 @@ def _engine_pool(options, file_config):
         db_opts['poolclass'] = pool.AssertionPool
 
 @post
+def _requirements(options, file_config):
+
+    requirement_cls = file_config.get('sqla_testing', "requirement_cls")
+    _setup_requirements(requirement_cls)
+
+def _setup_requirements(argument):
+    from sqlalchemy.testing import config
+    from sqlalchemy import testing
+
+    if config.requirements is not None:
+        return
+
+    modname, clsname = argument.split(":")
+
+    # importlib.import_module() only introduced in 2.7, a little
+    # late
+    mod = __import__(modname)
+    for component in modname.split(".")[1:]:
+        mod = getattr(mod, component)
+    req_cls = getattr(mod, clsname)
+
+    config.requirements = testing.requires = req_cls()
+
+@post
 def _prep_testing_database(options, file_config):
     from sqlalchemy.testing import config
     from sqlalchemy import schema, inspect
 
     if options.dropfirst:
-        for e in config.Config.all_dbs():
+        for cfg in config.Config.all_configs():
+            e = cfg.db
             inspector = inspect(e)
-
             try:
                 view_names = inspector.get_view_names()
             except NotImplementedError:
@@ -217,23 +243,25 @@ def _prep_testing_database(options, file_config):
                 for vname in view_names:
                     e.execute(schema._DropView(schema.Table(vname, schema.MetaData())))
 
-            try:
-                view_names = inspector.get_view_names(schema="test_schema")
-            except NotImplementedError:
-                pass
-            else:
-                for vname in view_names:
-                    e.execute(schema._DropView(
-                                schema.Table(vname,
-                                            schema.MetaData(), schema="test_schema")))
+            if config.requirements.schemas.enabled_for_config(cfg):
+                try:
+                    view_names = inspector.get_view_names(schema="test_schema")
+                except NotImplementedError:
+                    pass
+                else:
+                    for vname in view_names:
+                        e.execute(schema._DropView(
+                                    schema.Table(vname,
+                                                schema.MetaData(), schema="test_schema")))
 
             for tname in reversed(inspector.get_table_names(order_by="foreign_key")):
                 e.execute(schema.DropTable(schema.Table(tname, schema.MetaData())))
 
-            for tname in reversed(inspector.get_table_names(
-                                    order_by="foreign_key", schema="test_schema")):
-                e.execute(schema.DropTable(
-                    schema.Table(tname, schema.MetaData(), schema="test_schema")))
+            if config.requirements.schemas.enabled_for_config(cfg):
+                for tname in reversed(inspector.get_table_names(
+                                        order_by="foreign_key", schema="test_schema")):
+                    e.execute(schema.DropTable(
+                        schema.Table(tname, schema.MetaData(), schema="test_schema")))
 
 
 @post
@@ -257,29 +285,6 @@ def _reverse_topological(options, file_config):
 
 
 
-@post
-def _requirements(options, file_config):
-
-    requirement_cls = file_config.get('sqla_testing', "requirement_cls")
-    _setup_requirements(requirement_cls)
-
-def _setup_requirements(argument):
-    from sqlalchemy.testing import config
-    from sqlalchemy import testing
-
-    if config.requirements is not None:
-        return
-
-    modname, clsname = argument.split(":")
-
-    # importlib.import_module() only introduced in 2.7, a little
-    # late
-    mod = __import__(modname)
-    for component in modname.split(".")[1:]:
-        mod = getattr(mod, component)
-    req_cls = getattr(mod, clsname)
-
-    config.requirements = testing.requires = req_cls()
 
 @post
 def _post_setup_options(opt, file_config):

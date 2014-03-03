@@ -1,8 +1,9 @@
 import pytest
 import argparse
 import inspect
-py_unittest = None
 from . import plugin_base
+
+py_unittest = None
 
 def pytest_addoption(parser):
     group = parser.getgroup("sqlalchemy")
@@ -38,7 +39,6 @@ def pytest_pycollect_makeitem(collector, name, obj):
 
 _current_class = None
 
-from pytest import Item
 def pytest_runtest_setup(item):
     # I'd like to get module/class/test level calls here
     # but I don't quite see the pattern.
@@ -54,10 +54,20 @@ def pytest_runtest_setup(item):
 
         class_setup(item.parent)
         _current_class = item.parent
+
+        # this is needed for the class-level, to ensure that the
+        # teardown runs after the class is completed with its own
+        # class-level teardown...
         item.parent.addfinalizer(lambda: class_teardown(item.parent))
 
-    item.addfinalizer(lambda: test_teardown(item))
     test_setup(item)
+
+def pytest_runtest_teardown(item):
+    # ...but this works better as the hook here rather than
+    # using a finalizer, as the finalizer seems to get in the way
+    # of the test reporting failures correctly (you get a bunch of
+    # py.test assertion stuff instead)
+    test_teardown(item)
 
 def test_setup(item):
     id_ = "%s.%s:%s" % (item.parent.module.__name__, item.parent.name, item.name)
