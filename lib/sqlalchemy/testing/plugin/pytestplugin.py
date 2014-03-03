@@ -63,8 +63,11 @@ def pytest_runtest_setup(item):
 
     # ... so we're doing a little dance here to figure it out...
     if item.parent is not _current_class:
+
         class_setup(item.parent)
         _current_class = item.parent
+        item.parent.addfinalizer(lambda: class_teardown(item.parent))
+
     test_setup(item)
 
 def pytest_runtest_teardown(item, nextitem):
@@ -73,8 +76,6 @@ def pytest_runtest_teardown(item, nextitem):
 
     test_teardown(item)
 
-    if nextitem is None or nextitem.parent is not _current_class:
-        class_teardown(item.parent)
 
 def test_setup(item):
     id_ = "%s.%s:%s" % (item.parent.module.__name__, item.parent.name, item.name)
@@ -90,5 +91,4 @@ def class_setup(item):
         pytest.skip(gs.message)
 
 def class_teardown(item):
-    # TODO: not working yet, this has to be called *after* test teardown/teardown_class
     plugin_base.stop_test_class(item.cls)
