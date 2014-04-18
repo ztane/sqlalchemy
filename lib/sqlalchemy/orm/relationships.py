@@ -1626,7 +1626,7 @@ class RelationshipProperty(StrategizedProperty):
                     self.parent.class_.__name__))
 
         # check for conflicting relationship() on superclass
-        if not self.parent.concrete:
+        if not self.parent.concrete and self.propagate:
             for inheriting in self.parent.iterate_to_root():
                 if inheriting is not self.parent \
                         and inheriting.has_property(self.key):

@@ -1565,7 +1565,10 @@ class Mapper(_InspectionAttr):
 
         if key in self._props and \
                 not isinstance(prop, properties.ColumnProperty) and \
-                not isinstance(self._props[key], properties.ColumnProperty):
+                not isinstance(self._props[key], (
+                                    properties.ColumnProperty,
+                                    properties.ConcreteInheritedProperty)
+                        ):
             util.warn(
                 "Property %s on %s being replaced with new "
                 "property %s; the old property will be discarded. "

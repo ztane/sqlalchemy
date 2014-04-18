@@ -488,8 +488,6 @@ class ConcreteInheritedProperty(DescriptorProperty):
                 self._warn()
 
             def __get__(s, obj, owner):
-                if obj is None:
-                    return self.descriptor
                 self._warn()
         self.descriptor = NoninheritedProp()
 

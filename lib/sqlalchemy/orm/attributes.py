@@ -281,10 +281,14 @@ def create_proxied_attribute(descriptor):
                                        adapt_to_entity)
 
         def __get__(self, instance, owner):
-            if instance is None:
+            # give self.descriptor a chance to do something
+            # special.  If it just returns self, that means it didn't;
+            # so return us instead.
+            desc = self.descriptor.__get__(instance, owner)
+            if instance is None and desc is self.descriptor:
                 return self
             else:
-                return self.descriptor.__get__(instance, owner)
+                return desc
 
         def __str__(self):
             return "%s.%s" % (self.class_.__name__, self.key)

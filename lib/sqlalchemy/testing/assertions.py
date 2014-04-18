@@ -202,32 +202,28 @@ def startswith_(a, fragment, msg=None):
 
 
 @contextlib.contextmanager
-def raises(except_cls):
+def raises(except_cls, message=None):
     try:
         yield
-        assert False, '%s not raised' % except_cls.__name__
-    except except_cls:
-        pass
-
-
-def assert_raises(except_cls, callable_, *args, **kw):
-    try:
-        callable_(*args, **kw)
         success = False
-    except except_cls:
+    except except_cls as e:
+        if message:
+            assert re.search(message, util.text_type(e), re.UNICODE), \
+                            "%r !~ %s" % (message, e)
+            print(util.text_type(e).encode('utf-8'))
         success = True
 
     # assert outside the block so it works for AssertionError too !
     assert success, "Callable did not raise an exception"
 
 
+def assert_raises(except_cls, callable_, *args, **kw):
+    with raises(except_cls):
+        return callable_(*args, **kw)
+
 def assert_raises_message(except_cls, msg, callable_, *args, **kwargs):
-    try:
-        callable_(*args, **kwargs)
-        assert False, "Callable did not raise an exception"
-    except except_cls as e:
-        assert re.search(msg, util.text_type(e), re.UNICODE), "%r !~ %s" % (msg, e)
-        print(util.text_type(e).encode('utf-8'))
+    with raises(except_cls, msg):
+        return callable_(*args, **kwargs)
 
 
 class AssertsCompiledSQL(object):
