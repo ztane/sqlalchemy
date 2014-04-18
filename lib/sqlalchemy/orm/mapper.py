@@ -1484,7 +1484,7 @@ class Mapper(_InspectionAttr):
         return identities
 
     def _adapt_inherited_property(self, key, prop, init):
-        if not self.concrete:
+        if not self.concrete and prop.propagate:
             self._configure_property(key, prop, init=False, setparent=False)
         elif key not in self._props:
             self._configure_property(
@@ -1566,12 +1566,16 @@ class Mapper(_InspectionAttr):
         if key in self._props and \
                 not isinstance(prop, properties.ColumnProperty) and \
                 not isinstance(self._props[key], properties.ColumnProperty):
-            util.warn("Property %s on %s being replaced with new "
-                            "property %s; the old property will be discarded" % (
-                            self._props[key],
-                            self,
-                            prop,
-                        ))
+            util.warn(
+                "Property %s on %s being replaced with new "
+                "property %s; the old property will be discarded. "
+                "Define relationships with propagate=False to avoid "
+                "this warning." % (
+                    self._props[key],
+                    self,
+                    prop,
+                )
+            )
 
         self._props[key] = prop
 

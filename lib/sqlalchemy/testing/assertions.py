@@ -201,6 +201,15 @@ def startswith_(a, fragment, msg=None):
         a, fragment)
 
 
+@contextlib.contextmanager
+def raises(except_cls):
+    try:
+        yield
+        assert False, '%s not raised' % except_cls.__name__
+    except except_cls:
+        pass
+
+
 def assert_raises(except_cls, callable_, *args, **kw):
     try:
         callable_(*args, **kw)

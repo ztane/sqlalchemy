@@ -108,6 +108,7 @@ class RelationshipProperty(StrategizedProperty):
         active_history=False,
         cascade_backrefs=True,
         load_on_pending=False,
+        propagate=True,
         strategy_class=None, _local_remote_pairs=None,
         query_class=None,
             info=None):
@@ -649,6 +650,18 @@ class RelationshipProperty(StrategizedProperty):
 
               :ref:`relationship_primaryjoin`
 
+        :param propagate: When False, the relationship and its instrumentation
+          will not be applied to inheriting subclasses.  The relationship as
+          stated on the subclass will not be usable in any form; instead,
+          it is expected that a new relationship is applied to each subclass
+          individually.
+
+          The default is True, which indicates that joined or single table
+          inheritance subclasses will inherit the relationships of the parent
+          class.
+
+          .. versionadded:: 0.9.5
+
         :param remote_side:
           used for self-referential relationships, indicates the column or
           list of columns that form the "remote side" of the relationship.
@@ -784,6 +797,7 @@ class RelationshipProperty(StrategizedProperty):
         self.comparator_factory = comparator_factory or \
                                     RelationshipProperty.Comparator
         self.comparator = self.comparator_factory(self, None)
+        self.propagate = propagate
         util.set_creation_order(self)
 
         if info is not None:
@@ -1697,7 +1711,9 @@ class RelationshipProperty(StrategizedProperty):
             check = set(mapper.iterate_to_root()).\
                         union(mapper.self_and_descendants)
             for m in check:
-                if m.has_property(backref_key):
+                if m.has_property(backref_key) and \
+                    m.get_property(backref_key).propagate:
+
                     raise sa_exc.ArgumentError("Error creating backref "
                             "'%s' on relationship '%s': property of that "
                             "name exists on mapper '%s'" % (backref_key,

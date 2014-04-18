@@ -451,11 +451,13 @@ class ConcreteInheritedProperty(DescriptorProperty):
       "polymorphic union", which includes all attributes from
       all subclasses.
     * When a relationship() is configured on an inherited mapper,
-      but not on the subclass mapper.  Concrete mappers require
-      that relationship() is configured explicitly on each
-      subclass.
+      but not on the subclass mapper, and either the mapper is
+      "concrete" or the relationship specifies propagate=False.
+      Concrete mappers require that relationship() is configured
+      explicitly on each subclass.
 
     """
+    propagate = False
 
     def _comparator_factory(self, mapper):
         comparator_callable = None
@@ -465,27 +467,31 @@ class ConcreteInheritedProperty(DescriptorProperty):
             if not isinstance(p, ConcreteInheritedProperty):
                 comparator_callable = p.comparator_factory
                 break
-        return comparator_callable
+        return comparator_callable(self, self.parent)
+
+    @property
+    def mapper(self):
+        self._warn()
+
+    def _warn(self):
+        raise AttributeError("Concrete/non-propagated %s does not implement "
+            "attribute %r at the instance or class level.  Add this "
+            "property explicitly to %s." %
+            (self.parent, self.key, self.parent))
 
     def __init__(self):
-        def warn():
-            raise AttributeError("Concrete %s does not implement "
-                "attribute %r at the instance level.  Add this "
-                "property explicitly to %s." %
-                (self.parent, self.key, self.parent))
-
-        class NoninheritedConcreteProp(object):
+        class NoninheritedProp(object):
             def __set__(s, obj, value):
-                warn()
+                self._warn()
 
             def __delete__(s, obj):
-                warn()
+                self._warn()
 
             def __get__(s, obj, owner):
                 if obj is None:
                     return self.descriptor
-                warn()
-        self.descriptor = NoninheritedConcreteProp()
+                self._warn()
+        self.descriptor = NoninheritedProp()
 
 
 @util.langhelpers.dependency_for("sqlalchemy.orm.properties")
