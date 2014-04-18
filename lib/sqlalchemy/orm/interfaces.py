@@ -70,6 +70,14 @@ class MapperProperty(_MappedAttribute, _InspectionAttr):
 
     is_property = True
 
+    propagate = True
+    """This property should be propagated to inheriting mappers that use
+    single or joined table inheritance (but not concrete).
+
+    .. versionadded:: 0.9.5
+
+    """
+
     def setup(self, context, entity, path, adapter, **kwargs):
         """Called by Query for the purposes of constructing a SQL statement.
 
