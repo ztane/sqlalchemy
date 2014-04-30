@@ -15,6 +15,18 @@
     :version: 0.9.5
 
     .. change::
+        :tags: bug, firebird
+        :tickets: 3038
+
+        Fixed bug where the combination of "limit" rendering as
+        "SELECT FIRST n ROWS" using a bound parameter (only firebird has both),
+        combined with column-level subqueries
+        which also feature "limit" as well as "positional" bound parameters
+        (e.g. qmark style) would erroneously assign the subquery-level positions
+        before that of the enclosing SELECT, thus returning parameters which
+        are out of order.
+
+    .. change::
         :tags: bug, mssql
         :tickets: 3025
 
