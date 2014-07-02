@@ -109,6 +109,7 @@ class RelationshipProperty(StrategizedProperty):
         active_history=False,
         cascade_backrefs=True,
         load_on_pending=False,
+        bake_queries=True,
         strategy_class=None, _local_remote_pairs=None,
         query_class=None,
             info=None):
@@ -263,6 +264,15 @@ class RelationshipProperty(StrategizedProperty):
 
             :paramref:`~.relationship.backref` - alternative form
             of backref specification.
+
+        :param bake_queries:
+          Use the :class:`.BakedQuery` cache to cache queries used in lazy
+          loads.  True by default, as this typically improves performance
+          significantly.  Set to False to reduce ORM memory use, or
+          if unresolved stability issues are observed with the baked query
+          cache system.
+
+          .. versionadded:: 1.0.0
 
         :param cascade:
           a comma-separated list of cascade rules which determines how
@@ -781,6 +791,7 @@ class RelationshipProperty(StrategizedProperty):
         self.join_depth = join_depth
         self.local_remote_pairs = _local_remote_pairs
         self.extension = extension
+        self.bake_queries = bake_queries
         self.load_on_pending = load_on_pending
         self.comparator_factory = comparator_factory or \
                                     RelationshipProperty.Comparator

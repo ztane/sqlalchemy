@@ -161,7 +161,6 @@ class LoadManyToOneFromIdentityTest(fixtures.MappedTest):
         sess = Session()
         parents = sess.query(Parent).all()
 
-
         @profiling.function_call_count(variance=.2)
         def go():
             for p in parents:

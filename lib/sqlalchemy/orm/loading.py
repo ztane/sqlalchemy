@@ -19,6 +19,7 @@ from .interfaces import EXT_CONTINUE
 from ..sql import util as sql_util
 from .util import _none_set, state_str
 from .. import exc as sa_exc
+from . import exc as orm_exc
 
 _new_runid = util.counter()
 
@@ -229,6 +230,56 @@ def load_on_ident(query, key,
     try:
         return q.one()
     except orm_exc.NoResultFound:
+        return None
+
+def _load_on_ident_from_baked(query, key):
+    """Load the given identity key from the database."""
+
+    ident = key[1]
+
+    mapper = query.query._mapper_zero()
+
+    _get_clause, _get_params = mapper._get_clause
+
+    def setup(query):
+        _lcl_get_clause = _get_clause
+        q = query._clone()
+        q._get_condition()
+        q._order_by = None
+
+        # None present in ident - turn those comparisons
+        # into "IS NULL"
+        if None in ident:
+            nones = set([
+                        _get_params[col].key for col, value in
+                         zip(mapper.primary_key, ident) if value is None
+                        ])
+            _lcl_get_clause = sql_util.adapt_criterion_to_null(
+                                            _lcl_get_clause, nones)
+
+        _lcl_get_clause = q._adapt_clause(_lcl_get_clause, True, False)
+        q._criterion = _lcl_get_clause
+        return q
+
+    # cache the query against a key that includes
+    # which positions in the primary key are NULL
+    # (remember, we can map to an OUTER JOIN)
+    query.bake(setup, tuple(elem is None for elem in ident))
+
+    params = dict([
+        (_get_params[primary_key].key, id_val)
+        for id_val, primary_key in zip(ident, mapper.primary_key)
+    ])
+
+    query.params(**params)
+
+    result = query.all()
+    l = len(result)
+    if l > 1:
+        raise orm_exc.MultipleResultsFound()
+    elif l:
+        return result[0]
+    else:
         return None
 
 

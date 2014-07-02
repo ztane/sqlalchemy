@@ -388,6 +388,46 @@ class LazyLoader(AbstractRelationshipLoader):
             active_history=active_history
         )
 
+    def _simple_lazy_clause(self, state, passive):
+        criterion, bind_to_col, rev = \
+                                        self._lazywhere, \
+                                        self._bind_to_col, \
+                                        self._equated_columns
+
+        if state is None:
+            return sql_util.adapt_criterion_to_null(criterion, bind_to_col)
+
+        mapper = self.parent_property.parent
+
+        o = state.obj()  # strong ref
+        dict_ = attributes.instance_dict(o)
+
+        # use the "committed state" only if we're in a flush
+        # for this state.
+
+        params = {}
+
+        def visit_bindparam(bindparam):
+            bindparam._convert_to_non_anon()
+            if bindparam._identifying_key in bind_to_col:
+                if passive and passive & attributes.LOAD_AGAINST_COMMITTED:
+                    value = mapper._get_committed_state_attr_by_column(
+                            state, dict_,
+                            bind_to_col[bindparam._identifying_key])
+                else:
+                    value = mapper._get_state_attr_by_column(
+                            state, dict_,
+                            bind_to_col[bindparam._identifying_key])
+            else:
+                value = bindparam.value
+
+            params[bindparam.key] = value
+
+        criterion = visitors.cloned_traverse(
+                                criterion, {}, {'bindparam': visit_bindparam})
+
+        return criterion, params
+
     def lazy_clause(self, state, reverse_direction=False,
                                 alias_secondary=False,
                                 adapt_source=None,
@@ -538,33 +578,45 @@ class LazyLoader(AbstractRelationshipLoader):
             for pk in self.mapper.primary_key
         ]
 
-    @util.dependencies("sqlalchemy.orm.strategy_options")
-    def _emit_lazyload(self, strategy_options, session, state, ident_key, passive):
-        q = session.query(self.mapper)._adapt_all_clauses()
+    @util.dependencies("sqlalchemy.ext.baked",
+                    "sqlalchemy.orm.strategy_options")
+    def _emit_lazyload(self, baked, strategy_options, session, state,
+                                ident_key, passive):
+
+        q = baked.BakedQuery(lambda: session.query(self.mapper),
+                            bakery=self.mapper._compiled_cache)
+        q.bake(lambda q: q._adapt_all_clauses().
+                        _with_invoke_all_eagers(False),
+                    self.parent_property)
+
+        if not self.parent_property.bake_queries:
+            q.spoil()
 
         if self.parent_property.secondary is not None:
-            q = q.select_from(self.mapper, self.parent_property.secondary)
-
-        q = q._with_invoke_all_eagers(False)
+            q.bake(lambda q:
+                q.select_from(self.mapper, self.parent_property.secondary))
 
         pending = not state.key
 
         # don't autoflush on pending
         if pending or passive & attributes.NO_AUTOFLUSH:
-            q = q.autoflush(False)
-
+            q.bake(lambda q: q.autoflush(False))
 
         if state.load_path:
-            q = q._with_current_path(state.load_path[self.parent_property])
+            q.spoil()
+            q.bake(lambda q:
+                q._with_current_path(state.load_path[self.parent_property]))
 
         if state.load_options:
-            q = q._conditional_options(*state.load_options)
+            q.spoil()
+            q.bake(lambda q: q._conditional_options(*state.load_options))
 
         if self.use_get:
-            return loading.load_on_ident(q, ident_key)
+            return loading._load_on_ident_from_baked(q, ident_key)
 
         if self.parent_property.order_by:
-            q = q.order_by(*util.to_list(self.parent_property.order_by))
+            q.bake(lambda q:
+                q.order_by(*util.to_list(self.parent_property.order_by)))
 
         for rev in self.parent_property._reverse_property:
             # reverse props that are MANYTOONE are loading *this*
@@ -572,18 +624,20 @@ class LazyLoader(AbstractRelationshipLoader):
             if rev.direction is interfaces.MANYTOONE and \
                         rev._use_get and \
                         not isinstance(rev.strategy, LazyLoader):
-                q = q.options(strategy_options.Load(rev.parent).lazyload(rev.key))
+                q.bake(lambda q:
+                    q.options(
+                        strategy_options.Load(rev.parent).lazyload(rev.key)))
 
-        lazy_clause = self.lazy_clause(state, passive=passive)
+        lazy_clause, params = self._simple_lazy_clause(state, passive=passive)
 
         if pending:
-            bind_values = sql_util.bind_values(lazy_clause)
-            if orm_util._none_set.intersection(bind_values):
+            if orm_util._none_set.intersection(set(params)):
                 return None
 
-        q = q.filter(lazy_clause)
+        q.bake(lambda q: q.filter(lazy_clause))
+        q.params(**params)
 
-
+        #q.spoil()
         result = q.all()
         if self.uselist:
             return result

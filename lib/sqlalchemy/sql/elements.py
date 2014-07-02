@@ -1099,6 +1099,10 @@ class BindParameter(ColumnElement):
             self.key = _anonymous_label('%%(%d %s)s' % (id(self),
                     self._orig_key or 'param'))
 
+    def _convert_to_non_anon(self):
+        self.unique = False
+        self.key = re.sub(r'[% \(\)]+', '_', self._identifying_key)
+
     def compare(self, other, **kw):
         """Compare this :class:`BindParameter` to the given
         clause."""
