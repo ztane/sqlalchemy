@@ -172,7 +172,7 @@ class declared_attr(interfaces._MappedAttribute, property):
     def property(cls):
         return _declared_property
 
-    defer_defer_defer = False
+    should_resolve_late = False
 
 
 class _memoized_declared_attr(declared_attr):
@@ -182,13 +182,25 @@ class _memoized_declared_attr(declared_attr):
         self._cascading = cascading
 
     def __get__(desc, self, cls):
-        if desc.defer_defer_defer:
+        if desc.should_resolve_late:
             return desc
         elif cls in desc.reg:
             return desc.reg[cls]
         else:
             desc.reg[cls] = obj = desc.fget(cls)
             return obj
+
+    def resolve_early(self, cls, name):
+        if not self._cascading:
+            return getattr(cls, name)
+        else:
+            return self.__get__(self, cls)
+
+    def resolve_late(self, cls, name):
+        if self.should_resolve_late:
+            return self.fget(cls)
+        else:
+            raise NotImplementedError()
 
     @classproperty
     def cascading(cls):
@@ -200,8 +212,7 @@ class _declared_column(_memoized_declared_attr):
 
 
 class _declared_property(_memoized_declared_attr):
-    defer_defer_defer = True
-
+    should_resolve_late = True
 
 
 def declarative_base(bind=None, metadata=None, mapper=None, cls=object,
@@ -432,6 +443,12 @@ class AbstractConcreteBase(ConcreteBase):
                 mappers.append(mn)
         pjoin = cls._create_polymorphic_union(mappers)
         cls.__mapper__ = m = mapper(cls, pjoin, polymorphic_on=pjoin.c.type)
+
+        for base in cls.__mro__:
+            for name, obj in vars(base).items():
+                if isinstance(obj, _memoized_declared_attr) \
+                        and obj._cascading:
+                    m.add_property(name, obj.resolve_late(cls, name))
 
         for scls in cls.__subclasses__():
             sm = _mapper_or_none(scls)

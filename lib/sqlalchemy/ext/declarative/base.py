@@ -132,11 +132,8 @@ def _as_declarative(cls, classname, dict_):
                         "column_property(), relationship(), etc.) must "
                         "be declared as @declared_attr callables "
                         "on declarative mixin classes.")
-                elif isinstance(obj, _memoized_declared_attr): # and \
-                    if obj._cascading:
-                        dict_[name] = ret = obj.__get__(obj, cls)
-                    else:
-                        dict_[name] = ret = getattr(cls, name)
+                elif isinstance(obj, _memoized_declared_attr):
+                    dict_[name] = ret = obj.resolve_early(cls, name)
                     if isinstance(ret, (Column, MapperProperty)) and \
                             ret.doc is None:
                         ret.doc = obj.__doc__
@@ -166,7 +163,7 @@ def _as_declarative(cls, classname, dict_):
 
         value = dict_[k]
         if isinstance(value, declarative_props):
-            if value.defer_defer_defer:
+            if value.should_resolve_late:
                 add_later[k] = value
             else:
                 value = getattr(cls, k)
@@ -426,7 +423,7 @@ class _MapperConfig(object):
             **mapper_args
         )
         for k, v in self.add_later.items():
-            setattr(self.cls, k, v.fget(self.cls))
+            setattr(self.cls, k, v.resolve_late(self.cls, k))
 
 
 class _DeferredMapperConfig(_MapperConfig):
