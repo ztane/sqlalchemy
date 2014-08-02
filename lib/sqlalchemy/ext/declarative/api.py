@@ -13,7 +13,7 @@ from ...orm import synonym as _orm_synonym, mapper,\
     interfaces, properties
 from ...orm.util import polymorphic_union
 from ...orm.base import _mapper_or_none
-from ...util import OrderedDict
+from ...util import OrderedDict, classproperty
 from ... import exc
 import weakref
 
@@ -163,6 +163,45 @@ class declared_attr(interfaces._MappedAttribute, property):
 
     def __get__(desc, self, cls):
         return desc.fget(cls)
+
+    @classproperty
+    def column(cls):
+        return _declared_column
+
+    @classproperty
+    def property(cls):
+        return _declared_property
+
+    defer_defer_defer = False
+
+
+class _memoized_declared_attr(declared_attr):
+    def __init__(self, fget, cascading=False):
+        super(_memoized_declared_attr, self).__init__(fget)
+        self.reg = weakref.WeakKeyDictionary()
+        self._cascading = cascading
+
+    def __get__(desc, self, cls):
+        if desc.defer_defer_defer:
+            return desc
+        elif cls in desc.reg:
+            return desc.reg[cls]
+        else:
+            desc.reg[cls] = obj = desc.fget(cls)
+            return obj
+
+    @classproperty
+    def cascading(cls):
+        return lambda decorated: cls(decorated, cascading=True)
+
+
+class _declared_column(_memoized_declared_attr):
+    pass
+
+
+class _declared_property(_memoized_declared_attr):
+    defer_defer_defer = True
+
 
 
 def declarative_base(bind=None, metadata=None, mapper=None, cls=object,
