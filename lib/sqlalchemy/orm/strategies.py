@@ -659,7 +659,6 @@ class LazyLoader(AbstractRelationshipLoader):
         q.bake(lambda q: q.filter(lazy_clause))
         q.params(**params)
 
-        #q.spoil()
         result = q.all()
         if self.uselist:
             return result

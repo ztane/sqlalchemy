@@ -99,8 +99,8 @@ class BakedQuery(object):
         query = self.query
 
         query._execution_options = query._execution_options.union(
-                        {"compiled_cache": self._bakery}
-                    )
+            {"compiled_cache": self._bakery}
+        )
         baked_context = self._bakery[self._cache_key]
         context = QueryContext.__new__(QueryContext)
         context.__dict__.update(baked_context.__dict__)
@@ -111,7 +111,7 @@ class BakedQuery(object):
         self._unbake_subquery_loaders(context)
 
         context.statement.use_labels = True
-        if query._autoflush and not query._populate_existing:
+        if context.autoflush and not context.populate_existing:
             query.session._autoflush()
         return query.params(self._params)._execute_and_instances(context)
 

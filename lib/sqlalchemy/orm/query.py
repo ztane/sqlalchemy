@@ -3518,6 +3518,7 @@ class QueryContext(object):
 
         self.query = query
         self.session = query.session
+        self.autoflush = query._autoflush
         self.populate_existing = query._populate_existing
         self.invoke_all_eagers = query._invoke_all_eagers
         self.version_check = query._version_check
