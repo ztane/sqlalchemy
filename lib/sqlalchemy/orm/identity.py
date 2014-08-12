@@ -1,5 +1,6 @@
 # orm/identity.py
-# Copyright (C) 2005-2014 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2014 the SQLAlchemy authors and contributors
+# <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -7,6 +8,7 @@
 import weakref
 from . import attributes
 from .. import util
+
 
 class IdentityMap(object):
     def __init__(self):
@@ -236,7 +238,6 @@ class StrongInstanceDict(IdentityMap):
     def items(self):
         return self._dict.items()
 
-
     def all_states(self):
         return [attributes.instance_state(o) for o in self.values()]
 
@@ -261,8 +262,8 @@ class StrongInstanceDict(IdentityMap):
         if state.key in self:
             if attributes.instance_state(self._dict[state.key]) is not state:
                 raise AssertionError('A conflicting state is already '
-                        'present in the identity map for key %r'
-                        % (state.key, ))
+                                     'present in the identity map for key %r'
+                                     % (state.key, ))
         else:
             self._dict[state.key] = state.obj()
             self._manage_incoming_state(state)

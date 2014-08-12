@@ -10,6 +10,39 @@
 
 .. changelog::
     :version: 0.8.7
+    :released: July 22, 2014
+
+    .. change::
+        :tags: bug, mssql
+        :versions: 1.0.0, 0.9.7
+
+        Added statement encoding to the "SET IDENTITY_INSERT"
+        statements which operate when an explicit INSERT is being
+        interjected into an IDENTITY column, to support non-ascii table
+        identifiers on drivers such as pyodbc + unix + py2k that don't
+        support unicode statements.
+
+    .. change::
+        :tags: bug, mssql
+        :versions: 1.0.0, 0.9.7
+        :tickets: 3091
+
+        In the SQL Server pyodbc dialect, repaired the implementation
+        for the ``description_encoding`` dialect parameter, which when
+        not explicitly set was preventing  cursor.description from
+        being parsed correctly in the case of result sets that
+        contained names in alternate encodings.  This parameter
+        shouldn't be needed going forward.
+
+    .. change::
+        :tags: bug, sql
+        :versions: 1.0.0, 0.9.7
+        :tickets: 3124
+
+        Fixed bug in :class:`.Enum` and other :class:`.SchemaType`
+        subclasses where direct association of the type with a
+        :class:`.MetaData` would lead to a hang when events
+        (like create events) were emitted on the :class:`.MetaData`.
 
     .. change::
         :tags: bug, sql
@@ -86,10 +119,20 @@
     .. change::
         :tags: bug, ext
         :versions: 0.9.5, 1.0.0
-        :tickets: 3051
+        :tickets: 3051, 3093
 
         Fixed bug in mutable extension where :class:`.MutableDict` did not
         report change events for the ``setdefault()`` dictionary operation.
+
+    .. change::
+        :tags: bug, ext
+        :versions: 0.9.5, 1.0.0
+        :pullreq: bitbucket:24
+        :tickets: 3093, 3051
+
+        Fixed bug where :meth:`.MutableDict.setdefault` didn't return the
+        existing or new value (this bug was not released in any 0.8 version).
+        Pull request courtesy Thomas Hervé.
 
     .. change::
         :tags: bug, mysql
@@ -295,6 +338,15 @@
         to dialect mis-configurations under even minimal concurrency situations.
 
     .. change::
+        :tags: bug, sqlite
+        :pullreq: github:72
+
+        Restored a change that was missed in the backport of unique
+        constraint reflection to 0.8, where :class:`.UniqueConstraint`
+        with SQLite would fail if reserved keywords were included in the
+        names of columns.  Pull request courtesy Roman Podolyaka.
+
+    .. change::
         :tags: bug, postgresql
         :tickets: 2291
         :versions: 0.9.3
@@ -474,6 +526,7 @@
 
 .. changelog::
     :version: 0.8.4
+    :released: December 8, 2013
 
      .. change::
         :tags: bug, engine

@@ -131,6 +131,7 @@ wishes to support the new feature should now call upon the ``._limit_clause``
 and ``._offset_clause`` attributes to receive the full SQL expression, rather
 than the integer value.
 
+.. _feature_3076:
 
 Behavioral Improvements
 =======================

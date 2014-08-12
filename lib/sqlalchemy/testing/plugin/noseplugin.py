@@ -1,5 +1,6 @@
 # plugin/noseplugin.py
-# Copyright (C) 2005-2014 the SQLAlchemy authors and contributors <see AUTHORS file>
+# Copyright (C) 2005-2014 the SQLAlchemy authors and contributors
+# <see AUTHORS file>
 #
 # This module is part of SQLAlchemy and is released under
 # the MIT License: http://www.opensource.org/licenses/mit-license.php
@@ -17,12 +18,14 @@ import sys
 from nose.plugins import Plugin
 fixtures = None
 
+py3k = sys.version_info >= (3, 0)
 # no package imports yet!  this prevents us from tripping coverage
 # too soon.
 path = os.path.join(os.path.dirname(__file__), "plugin_base.py")
-if sys.version_info >= (3,3):
+if sys.version_info >= (3, 3):
     from importlib import machinery
-    plugin_base = machinery.SourceFileLoader("plugin_base", path).load_module()
+    plugin_base = machinery.SourceFileLoader(
+        "plugin_base", path).load_module()
 else:
     import imp
     plugin_base = imp.load_source("plugin_base", path)
@@ -65,30 +68,35 @@ class NoseSQLAlchemy(Plugin):
         return ""
 
     def wantFunction(self, fn):
-        if fn.__module__ is None:
-            return False
-        if fn.__module__.startswith('sqlalchemy.testing'):
-            return False
+        return False
+
+    def wantMethod(self, fn):
+        if py3k:
+            cls = fn.__self__.cls
+        else:
+            cls = fn.im_class
+        print "METH:", fn, "CLS:", cls
+        return plugin_base.want_method(cls, fn)
 
     def wantClass(self, cls):
         return plugin_base.want_class(cls)
 
     def beforeTest(self, test):
         plugin_base.before_test(test,
-                        test.test.cls.__module__,
-                        test.test.cls, test.test.method.__name__)
+                                test.test.cls.__module__,
+                                test.test.cls, test.test.method.__name__)
 
     def afterTest(self, test):
         plugin_base.after_test(test)
 
     def startContext(self, ctx):
         if not isinstance(ctx, type) \
-            or not issubclass(ctx, fixtures.TestBase):
+                or not issubclass(ctx, fixtures.TestBase):
             return
         plugin_base.start_test_class(ctx)
 
     def stopContext(self, ctx):
         if not isinstance(ctx, type) \
-            or not issubclass(ctx, fixtures.TestBase):
+                or not issubclass(ctx, fixtures.TestBase):
             return
         plugin_base.stop_test_class(ctx)

@@ -11,8 +11,254 @@
         :start-line: 5
 
 .. changelog::
+    :version: 0.9.8
+
+    .. change::
+        :tags: bug, postgresql
+        :versions: 1.0.0
+        :tickets: 3159
+
+        Fixed bug where Postgresql JSON type was not able to persist or
+        otherwise render a SQL NULL column value, rather than a JSON-encoded
+        ``'null'``.  To support this case, changes are as follows:
+
+        * The value :func:`.null` can now be specified, which will always
+          result in a NULL value resulting in the statement.
+
+        * A new parameter :paramref:`.JSON.none_as_null` is added, which
+          when True indicates that the Python ``None`` value should be
+          peristed as SQL NULL, rather than JSON-encoded ``'null'``.
+
+        Retrival of NULL as None is also repaired for DBAPIs other than
+        psycopg2, namely pg8000.
+
+    .. change::
+        :tags: bug, sql
+        :versions: 1.0.0
+        :tickets: 3154
+
+        Fixed bug in CTE where ``literal_binds`` compiler argument would not
+        be always be correctly propagated when one CTE referred to another
+        aliased CTE in a statement.
+
+    .. change::
+        :tags: bug, postgresql
+        :versions: 1.0.0
+        :tickets: 3075
+
+        The exception wrapping system for DBAPI errors can now accommodate
+        non-standard DBAPI exceptions, such as the psycopg2
+        TransactionRollbackError.  These exceptions will now be raised
+        using the closest available subclass in ``sqlalchemy.exc``, in the
+        case of TransactionRollbackError, ``sqlalchemy.exc.OperationalError``.
+
+    .. change::
+        :tags: bug, sql
+        :versions: 1.0.0
+        :tickets: 3144, 3067
+
+        Fixed 0.9.7 regression caused by :ticket:`3067` in conjunction with
+        a mis-named unit test such that so-called "schema" types like
+        :class:`.Boolean` and :class:`.Enum` could no longer be pickled.
+
+    .. change::
+        :tags: bug, postgresql
+        :versions: 1.0.0
+        :tickets: 3141
+        :pullreq: github:124
+
+        Fixed bug in :class:`.postgresql.array` object where comparison
+        to a plain Python list would fail to use the correct array constructor.
+        Pull request courtesy Andrew.
+
+    .. change::
+        :tags: bug, postgresql
+        :versions: 1.0.0
+        :tickets: 3137
+
+        Added a supported :meth:`.FunctionElement.alias` method to functions,
+        e.g. the ``func`` construct.  Previously, behavior for this method
+        was undefined.  The current behavior mimics that of pre-0.9.4,
+        which is that the function is turned into a single-column FROM
+        clause with the given alias name, where the column itself is
+        anonymously named.
+
+.. changelog::
     :version: 0.9.7
-    :released:
+    :released: July 22, 2014
+
+    .. change::
+        :tags: bug, postgresql, pg8000
+        :tickets: 3134
+        :versions: 1.0.0
+
+        Fixed bug introduced in 0.9.5 by new pg8000 isolation level feature
+        where engine-level isolation level parameter would raise an error
+        on connect.
+
+    .. change::
+        :tags: bug, oracle, tests
+        :tickets: 3128
+        :versions: 1.0.0
+
+        Fixed bug in oracle dialect test suite where in one test,
+        'username' was assumed to be in the database URL, even though
+        this might not be the case.
+
+    .. change::
+        :tags: bug, orm, eagerloading
+        :tickets: 3131
+        :versions: 1.0.0
+
+        Fixed a regression caused by :ticket:`2976` released in 0.9.4 where
+        the "outer join" propagation along a chain of joined eager loads
+        would incorrectly convert an "inner join" along a sibling join path
+        into an outer join as well, when only descendant paths should be
+        receiving the "outer join" propagation; additionally, fixed related
+        issue where "nested" join propagation would take place inappropriately
+        between two sibling join paths.
+
+    .. change::
+        :tags: bug, sqlite
+        :tickets: 3130
+        :versions: 1.0.0
+
+        Fixed a SQLite join rewriting issue where a subquery that is embedded
+        as a scalar subquery such as within an IN would receive inappropriate
+        substitutions from the enclosing query, if the same table were present
+        inside the subquery as were in the enclosing query such as in a
+        joined inheritance scenario.
+
+    .. change::
+        :tags: bug, sql
+        :tickets: 3067
+        :versions: 1.0.0
+
+        Fix bug in naming convention feature where using a check
+        constraint convention that includes ``constraint_name`` would
+        then force all :class:`.Boolean` and :class:`.Enum` types to
+        require names as well, as these implicitly create a
+        constraint, even if the ultimate target backend were one that does
+        not require generation of the constraint such as Postgresql.
+        The mechanics of naming conventions for these particular
+        constraints has been reorganized such that the naming
+        determination is done at DDL compile time, rather than at
+        constraint/table construction time.
+
+    .. change::
+        :tags: bug, mssql
+        :tickets: 3025
+
+        Fixed a regression from 0.9.5 caused by :ticket:`3025` where the
+        query used to determine "default schema" is invalid in SQL Server 2000.
+        For SQL Server 2000 we go back to defaulting to the "schema name"
+        parameter of the dialect, which is configurable but defaults
+        to 'dbo'.
+
+    .. change::
+        :tags: bug, orm
+        :tickets: 3083, 2736
+        :versions: 1.0.0
+
+        Fixed a regression from 0.9.0 due to :ticket:`2736` where the
+        :meth:`.Query.select_from` method no longer set up the "from
+        entity" of the :class:`.Query` object correctly, so that
+        subsequent :meth:`.Query.filter_by` or :meth:`.Query.join`
+        calls would fail to check the appropriate "from" entity when
+        searching for attributes by string name.
+
+    .. change::
+        :tags: bug, sql
+        :tickets: 3090
+        :versions: 1.0.0
+
+        Fixed bug in common table expressions whereby positional bound
+        parameters could be expressed in the wrong final order
+        when CTEs were nested in certain ways.
+
+    .. change::
+        :tags: bug, sql
+        :tickets: 3069
+        :versions: 1.0.0
+
+        Fixed bug where multi-valued :class:`.Insert` construct would fail
+        to check subsequent values entries beyond the first one given
+        for literal SQL expressions.
+
+    .. change::
+        :tags: bug, sql
+        :tickets: 3123
+        :versions: 1.0.0
+
+        Added a "str()" step to the dialect_kwargs iteration for
+        Python version < 2.6.5, working around the
+        "no unicode keyword arg" bug as these args are passed along as
+        keyword args within some reflection processes.
+
+    .. change::
+        :tags: bug, sql
+        :tickets: 3122
+        :versions: 1.0.0
+
+        The :meth:`.TypeEngine.with_variant` method will now accept a
+        type class as an argument which is internally converted to an
+        instance, using the same convention long established by other
+        constructs such as :class:`.Column`.
+
+    .. change::
+        :tags: bug, orm
+        :tickets: 3117
+
+        The "evaulator" for query.update()/delete() won't work with multi-table
+        updates, and needs to be set to `synchronize_session=False` or
+        `synchronize_session='fetch'`; a warning is now emitted.  In
+        1.0 this will be promoted to a full exception.
+
+    .. change::
+        :tags: bug, tests
+        :versions: 1.0.0
+
+        Fixed bug where "python setup.py test" wasn't calling into
+        distutils appropriately, and errors would be emitted at the end
+        of the test suite.
+
+    .. change::
+        :tags: feature, postgresql
+        :versions: 1.0.0
+        :pullreq: bitbucket:22
+        :tickets: 3078
+
+        Added kw argument ``postgresql_regconfig`` to the
+        :meth:`.Operators.match` operator, allows the "reg config" argument
+        to be specified to the ``to_tsquery()`` function emitted.
+        Pull request courtesy Jonathan Vanasco.
+
+    .. change::
+        :tags: feature, postgresql
+        :versions: 1.0.0
+        :pullreq: github:101
+
+        Added support for Postgresql JSONB via :class:`.JSONB`.  Pull request
+        courtesy Damian Dimmich.
+
+    .. change::
+        :tags: feature, mssql
+        :pullreq: github:98
+        :versions: 1.0.0
+
+        Enabled "multivalues insert" for SQL Server 2008.  Pull request
+        courtesy Albert Cervin.  Also expanded the checks for "IDENTITY INSERT"
+        mode to include when the identity key is present in the
+        VALUEs clause of the statement.
+
+    .. change::
+        :tags: feature, engine
+        :tickets: 3076
+        :versions: 1.0.0
+
+        Added new event :meth:`.ConnectionEvents.handle_error`, a more
+        fully featured and comprehensive replacement for
+        :meth:`.ConnectionEvents.dbapi_error`.
 
     .. change::
         :tags: bug, orm
@@ -40,7 +286,7 @@
         :tickets: 3099
 
         Fixed bug involving dynamic attributes, that was again a regression
-        of :ticket:`3060` from verision 0.9.5.  A self-referential relationship
+        of :ticket:`3060` from version 0.9.5.  A self-referential relationship
         with lazy='dynamic' would raise a TypeError within a flush operation.
 
     .. change::
@@ -186,12 +432,10 @@
         In this situation, a many-to-one relationship set to None, or
         in some cases a scalar attribute set to None, may not be detected
         as a net change in value, and therefore the UPDATE would not reset
-        what was on the previous row.
-
-        The fix here takes on a different form in 1.0.0 vs. 0.9.5.
-        In 1.0.0, the issue is ultimately resolved by :ticket:`3061`,
-        which reverts the more patchwork version of the fix as it exists
-        in 0.9.5.
+        what was on the previous row.   This is due to some as-yet
+        unresovled side effects of the way attribute history works in terms
+        of implicitly assuming None isn't really a "change" for a previously
+        un-set attribute.  See also :ticket:`3061`.
 
         .. note::
 

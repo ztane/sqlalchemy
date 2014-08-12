@@ -15,6 +15,8 @@ class TypesTest(fixtures.TestBase, AssertsExecutionResults, AssertsCompiledSQL):
     "Test MySQL column types"
 
     __dialect__ = mysql.dialect()
+    __only_on__ = 'mysql'
+    __backend__ = True
 
     def test_numeric(self):
         "Exercise type specification and options for numeric types."
@@ -152,14 +154,17 @@ class TypesTest(fixtures.TestBase, AssertsExecutionResults, AssertsCompiledSQL):
                 res
             )
 
-    @testing.only_if('mysql')
+    @testing.fails_if(
+        lambda: testing.against("mysql+mysqlconnector")
+        and not util.py3k,
+        "bug in mysqlconnector; http://bugs.mysql.com/bug.php?id=73266")
     @testing.provide_metadata
     def test_precision_float_roundtrip(self):
         t = Table('t', self.metadata,
                     Column('scale_value', mysql.DOUBLE(
-                                        precision=15, scale=12, asdecimal=True)),
+                            precision=15, scale=12, asdecimal=True)),
                     Column('unscale_value', mysql.DOUBLE(
-                                        decimal_return_scale=12, asdecimal=True))
+                            decimal_return_scale=12, asdecimal=True))
             )
         t.create(testing.db)
         testing.db.execute(
@@ -258,6 +263,7 @@ class TypesTest(fixtures.TestBase, AssertsExecutionResults, AssertsCompiledSQL):
             )
 
     @testing.only_if('mysql')
+    @testing.fails_on('mysql+mysqlconnector', "different unicode behavior")
     @testing.exclude('mysql', '<', (5, 0, 5), 'a 5.0+ feature')
     @testing.provide_metadata
     def test_charset_collate_table(self):
@@ -290,7 +296,6 @@ class TypesTest(fixtures.TestBase, AssertsExecutionResults, AssertsCompiledSQL):
         ]:
             self.assert_compile(type_, expected)
 
-    @testing.only_if('mysql')
     @testing.exclude('mysql', '<', (5, 0, 5), 'a 5.0+ feature')
     @testing.fails_if(
             lambda: testing.against("mysql+oursql") and util.py3k,
@@ -349,7 +354,6 @@ class TypesTest(fixtures.TestBase, AssertsExecutionResults, AssertsCompiledSQL):
         ]:
             self.assert_compile(type_, expected)
 
-    @testing.only_if('mysql')
     @testing.provide_metadata
     def test_boolean_roundtrip(self):
         bool_table = Table(
@@ -447,7 +451,6 @@ class TypesTest(fixtures.TestBase, AssertsExecutionResults, AssertsCompiledSQL):
 
             )
 
-    @testing.only_if('mysql')
     @testing.provide_metadata
     def test_timestamp_nullable(self):
         ts_table = Table('mysql_timestamp', self.metadata,
@@ -514,7 +517,7 @@ class TypesTest(fixtures.TestBase, AssertsExecutionResults, AssertsCompiledSQL):
             datetime.time(8, 37, 35, 450)
         )
 
-    @testing.only_if('mysql')
+    @testing.fails_on("mysql+oursql", "TODO: probable OurSQL bug")
     @testing.provide_metadata
     def test_time_roundtrip(self):
         t = Table('mysql_time', self.metadata,
@@ -524,7 +527,6 @@ class TypesTest(fixtures.TestBase, AssertsExecutionResults, AssertsCompiledSQL):
         t.insert().values(t1=datetime.time(8, 37, 35)).execute()
         eq_(select([t.c.t1]).scalar(), datetime.time(8, 37, 35))
 
-    @testing.only_if('mysql')
     @testing.provide_metadata
     def test_year(self):
         """Exercise YEAR."""
@@ -554,6 +556,7 @@ class EnumSetTest(fixtures.TestBase, AssertsExecutionResults, AssertsCompiledSQL
 
     __only_on__ = 'mysql'
     __dialect__ = mysql.dialect()
+    __backend__ = True
 
 
     @testing.provide_metadata
@@ -652,20 +655,20 @@ class EnumSetTest(fixtures.TestBase, AssertsExecutionResults, AssertsCompiledSQL
 
         res = set_table.select().execute().fetchall()
 
-        if testing.against("+oursql"):
-            expected = [
-                # 1st row with all c's, data truncated
-                (set(['']), set(['']), set(['']), set(['']), None),
-            ]
-        else:
+        if not testing.against("+oursql"):
+            # oursql receives this for first row:
+            # (set(['']), set(['']), set(['']), set(['']), None),
+            # but based on ...OS?  MySQL version?  not clear.
+            # not worth testing.
+
             expected = []
 
-        expected.extend([
-            (set(['a']), set(['a']), set(['a']), set(["'a'"]), set(['a', 'b'])),
-            (set(['b']), set(['b']), set(['b']), set(['b']), set(['a', 'b']))
-        ])
+            expected.extend([
+                (set(['a']), set(['a']), set(['a']), set(["'a'"]), set(['a', 'b'])),
+                (set(['b']), set(['b']), set(['b']), set(['b']), set(['a', 'b']))
+            ])
 
-        eq_(res, expected)
+            eq_(res, expected)
 
     @testing.provide_metadata
     def test_set_roundtrip_plus_reflection(self):

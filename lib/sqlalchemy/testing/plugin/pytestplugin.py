@@ -3,6 +3,14 @@ import argparse
 import inspect
 from . import plugin_base
 import collections
+import itertools
+
+try:
+    import xdist
+    has_xdist = True
+except ImportError:
+    has_xdist = False
+
 
 def pytest_addoption(parser):
     group = parser.getgroup("sqlalchemy")
@@ -11,7 +19,8 @@ def pytest_addoption(parser):
         callback_ = kw.pop("callback", None)
         if callback_:
             class CallableAction(argparse.Action):
-                def __call__(self, parser, namespace, values, option_string=None):
+                def __call__(self, parser, namespace,
+                             values, option_string=None):
                     callback_(option_string, values, parser)
             kw["action"] = CallableAction
 
@@ -20,12 +29,37 @@ def pytest_addoption(parser):
     plugin_base.setup_options(make_option)
     plugin_base.read_config()
 
+
 def pytest_configure(config):
+    if hasattr(config, "slaveinput"):
+        plugin_base.restore_important_follower_config(config.slaveinput)
+        plugin_base.configure_follower(
+            config.slaveinput["follower_ident"]
+        )
+
     plugin_base.pre_begin(config.option)
 
-    plugin_base.set_coverage_flag(bool(getattr(config.option, "cov_source", False)))
+    plugin_base.set_coverage_flag(bool(getattr(config.option,
+                                               "cov_source", False)))
 
     plugin_base.post_begin()
+
+if has_xdist:
+    _follower_count = itertools.count(1)
+
+    def pytest_configure_node(node):
+        # the master for each node fills slaveinput dictionary
+        # which pytest-xdist will transfer to the subprocess
+
+        plugin_base.memoize_important_follower_config(node.slaveinput)
+
+        node.slaveinput["follower_ident"] = "test_%s" % next(_follower_count)
+        from . import provision
+        provision.create_follower_db(node.slaveinput["follower_ident"])
+
+    def pytest_testnodedown(node, error):
+        from . import provision
+        provision.drop_follower_db(node.slaveinput["follower_ident"])
 
 
 def pytest_collection_modifyitems(session, config, items):
@@ -42,12 +76,14 @@ def pytest_collection_modifyitems(session, config, items):
     rebuilt_items = collections.defaultdict(list)
     test_classes = set(item.parent for item in items)
     for test_class in test_classes:
-        for sub_cls in plugin_base.generate_sub_tests(test_class.cls, test_class.parent.module):
+        for sub_cls in plugin_base.generate_sub_tests(
+                test_class.cls, test_class.parent.module):
             if sub_cls is not test_class.cls:
                 list_ = rebuilt_items[test_class.cls]
 
-                for inst in pytest.Class(sub_cls.__name__,
-                                parent=test_class.parent.parent).collect():
+                for inst in pytest.Class(
+                        sub_cls.__name__,
+                        parent=test_class.parent.parent).collect():
                     list_.extend(inst.collect())
 
     newitems = []
@@ -61,26 +97,24 @@ def pytest_collection_modifyitems(session, config, items):
     # seems like the functions attached to a test class aren't sorted already?
     # is that true and why's that? (when using unittest, they're sorted)
     items[:] = sorted(newitems, key=lambda item: (
-                                        item.parent.parent.parent.name,
-                                        item.parent.parent.name,
-                                        item.name
-                                    )
-                        )
-
+        item.parent.parent.parent.name,
+        item.parent.parent.name,
+        item.name
+    ))
 
 
 def pytest_pycollect_makeitem(collector, name, obj):
-
     if inspect.isclass(obj) and plugin_base.want_class(obj):
         return pytest.Class(name, parent=collector)
     elif inspect.isfunction(obj) and \
-            name.startswith("test_") and \
-            isinstance(collector, pytest.Instance):
+            isinstance(collector, pytest.Instance) and \
+            plugin_base.want_method(collector.cls, obj):
         return pytest.Function(name, parent=collector)
     else:
         return []
 
 _current_class = None
+
 
 def pytest_runtest_setup(item):
     # here we seem to get called only based on what we collected
@@ -100,9 +134,11 @@ def pytest_runtest_setup(item):
         # this is needed for the class-level, to ensure that the
         # teardown runs after the class is completed with its own
         # class-level teardown...
-        item.parent.parent.addfinalizer(lambda: class_teardown(item.parent.parent))
+        item.parent.parent.addfinalizer(
+            lambda: class_teardown(item.parent.parent))
 
     test_setup(item)
+
 
 def pytest_runtest_teardown(item):
     # ...but this works better as the hook here rather than
@@ -111,15 +147,19 @@ def pytest_runtest_teardown(item):
     # py.test assertion stuff instead)
     test_teardown(item)
 
+
 def test_setup(item):
-    plugin_base.before_test(item,
-                item.parent.module.__name__, item.parent.cls, item.name)
+    plugin_base.before_test(item, item.parent.module.__name__,
+                            item.parent.cls, item.name)
+
 
 def test_teardown(item):
     plugin_base.after_test(item)
 
+
 def class_setup(item):
     plugin_base.start_test_class(item.cls)
+
 
 def class_teardown(item):
     plugin_base.stop_test_class(item.cls)
