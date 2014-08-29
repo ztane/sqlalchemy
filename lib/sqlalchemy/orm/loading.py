@@ -416,8 +416,9 @@ def instance_processor(mapper, context, result, path, adapter,
         return instance
     return _instance
 
+from sqlalchemy.cloader import _populate_full
 
-def _populate_full(
+def _dont_populate_full(
         context, load_path, row, state, dict_, isnew,
         loaded_instance, populate_existing, populators):
     if isnew:

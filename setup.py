@@ -43,7 +43,9 @@ ext_modules = [
     Extension('sqlalchemy.cresultproxy',
               sources=['lib/sqlalchemy/cextension/resultproxy.c']),
     Extension('sqlalchemy.cutils',
-              sources=['lib/sqlalchemy/cextension/utils.c'])
+              sources=['lib/sqlalchemy/cextension/utils.c']),
+    Extension('sqlalchemy.cloader',
+              sources=['lib/sqlalchemy/cextension/loader.c'])
     ]
 
 ext_errors = (CCompilerError, DistutilsExecError, DistutilsPlatformError)
