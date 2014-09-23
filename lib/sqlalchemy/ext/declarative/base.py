@@ -33,7 +33,7 @@ def _declared_mapping_info(cls):
 
 
 def _as_declarative(cls, classname, dict_):
-    from .api import declared_attr
+    from .api import declared_attr, _memoized_declared_attr
 
     # dict_ will be a dictproxy, which we can't write to, and we need to!
     dict_ = dict(dict_)
@@ -132,6 +132,14 @@ def _as_declarative(cls, classname, dict_):
                         "column_property(), relationship(), etc.) must "
                         "be declared as @declared_attr callables "
                         "on declarative mixin classes.")
+                elif isinstance(obj, _memoized_declared_attr): # and \
+                    if obj._cascading:
+                        dict_[name] = ret = obj.__get__(obj, cls)
+                    else:
+                        dict_[name] = ret = getattr(cls, name)
+                    if isinstance(ret, (Column, MapperProperty)) and \
+                            ret.doc is None:
+                        ret.doc = obj.__doc__
                 elif isinstance(obj, declarative_props):
                     dict_[name] = ret = \
                         column_copies[obj] = getattr(cls, name)
@@ -148,6 +156,7 @@ def _as_declarative(cls, classname, dict_):
 
     clsregistry.add_class(classname, cls)
     our_stuff = util.OrderedDict()
+    add_later = util.OrderedDict()
 
     for k in list(dict_):
 
@@ -157,7 +166,10 @@ def _as_declarative(cls, classname, dict_):
 
         value = dict_[k]
         if isinstance(value, declarative_props):
-            value = getattr(cls, k)
+            if value.defer_defer_defer:
+                add_later[k] = value
+            else:
+                value = getattr(cls, k)
 
         elif isinstance(value, QueryableAttribute) and \
                 value.class_ is not cls and \
@@ -324,7 +336,8 @@ def _as_declarative(cls, classname, dict_):
                  declared_columns,
                  column_copies,
                  our_stuff,
-                 mapper_args_fn)
+                 mapper_args_fn,
+                 add_later)
     if not defer_map:
         mt.map()
 
@@ -339,7 +352,8 @@ class _MapperConfig(object):
                  inherits,
                  declared_columns,
                  column_copies,
-                 properties, mapper_args_fn):
+                 properties, mapper_args_fn,
+                 add_later):
         self.mapper_cls = mapper_cls
         self.cls = cls
         self.local_table = table
@@ -348,6 +362,7 @@ class _MapperConfig(object):
         self.mapper_args_fn = mapper_args_fn
         self.declared_columns = declared_columns
         self.column_copies = column_copies
+        self.add_later = add_later
 
     def _prepare_mapper_arguments(self):
         properties = self.properties
@@ -410,6 +425,8 @@ class _MapperConfig(object):
             self.local_table,
             **mapper_args
         )
+        for k, v in self.add_later.items():
+            setattr(self.cls, k, v.fget(self.cls))
 
 
 class _DeferredMapperConfig(_MapperConfig):

@@ -11,7 +11,8 @@ from sqlalchemy.orm import relationship, create_session, class_mapper, \
     Session
 from sqlalchemy.util import classproperty
 from sqlalchemy.ext.declarative import declared_attr
-from sqlalchemy.testing import fixtures
+from sqlalchemy.testing import fixtures, mock
+from sqlalchemy.testing.util import gc_collect
 
 Base = None
 
@@ -1300,6 +1301,91 @@ class DeclarativeMixinPropertyTest(DeclarativeTestBase):
 
     def test_relationship_primryjoin(self):
         self._test_relationship(True)
+
+
+class DeclaredAttrTest(DeclarativeTestBase):
+    def test_plain_called_repeatedly(self):
+        counter = mock.Mock()
+
+        class Mixin(object):
+            @declared_attr
+            def my_prop(cls):
+                counter(cls)
+                return Column('x', Integer)
+
+        class A(Base, Mixin):
+            __tablename__ = 'a'
+            id = Column(Integer, primary_key=True)
+
+            @declared_attr
+            def my_other_prop(cls):
+                return column_property(cls.my_prop + 5)
+        eq_(counter.mock_calls, [mock.call(A), mock.call(A)])
+
+        class B(Base, Mixin):
+            __tablename__ = 'b'
+            id = Column(Integer, primary_key=True)
+
+            @declared_attr
+            def my_other_prop(cls):
+                return column_property(cls.my_prop + 5)
+
+        eq_(
+            counter.mock_calls,
+            [mock.call(A), mock.call(A), mock.call(B), mock.call(B)]
+        )
+
+    def test_singleton_called_once(self):
+        counter = mock.Mock()
+
+        class Mixin(object):
+            @declared_attr.memoized
+            def my_prop(cls):
+                counter(cls)
+                return Column('x', Integer)
+
+        class A(Base, Mixin):
+            __tablename__ = 'a'
+            id = Column(Integer, primary_key=True)
+
+            @declared_attr
+            def my_other_prop(cls):
+                return column_property(cls.my_prop + 5)
+
+        eq_(counter.mock_calls, [mock.call(A)])
+
+        class B(Base, Mixin):
+            __tablename__ = 'b'
+            id = Column(Integer, primary_key=True)
+
+            @declared_attr
+            def my_other_prop(cls):
+                return column_property(cls.my_prop + 5)
+
+        eq_(counter.mock_calls, [mock.call(A), mock.call(B)])
+
+    def test_singleton_gc(self):
+        counter = mock.Mock()
+
+        class Mixin(object):
+            @declared_attr.memoized
+            def my_prop(cls):
+                counter(cls.__name__)
+                return Column('x', Integer)
+
+        class A(Base, Mixin):
+            __tablename__ = 'b'
+            id = Column(Integer, primary_key=True)
+
+            @declared_attr
+            def my_other_prop(cls):
+                return column_property(cls.my_prop + 5)
+
+        eq_(counter.mock_calls, [mock.call("A")])
+        del A
+        gc_collect()
+        assert "A" not in Base._decl_class_registry
+        assert not Mixin.__dict__['my_prop'].reg
 
 
 class AbstractTest(DeclarativeTestBase):
