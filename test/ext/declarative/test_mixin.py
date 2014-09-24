@@ -3,12 +3,11 @@ from sqlalchemy.testing import eq_, assert_raises, \
 from sqlalchemy.ext import declarative as decl
 import sqlalchemy as sa
 from sqlalchemy import testing
-from sqlalchemy import Integer, String, ForeignKey
+from sqlalchemy import Integer, String, ForeignKey, select, func
 from sqlalchemy.testing.schema import Table, Column
 from sqlalchemy.orm import relationship, create_session, class_mapper, \
     configure_mappers, clear_mappers, \
-    deferred, column_property, \
-    Session
+    deferred, column_property, Session, base as orm_base
 from sqlalchemy.util import classproperty
 from sqlalchemy.ext.declarative import declared_attr
 from sqlalchemy.testing import fixtures, mock
@@ -1303,7 +1302,9 @@ class DeclarativeMixinPropertyTest(DeclarativeTestBase):
         self._test_relationship(True)
 
 
-class DeclaredAttrTest(DeclarativeTestBase):
+class DeclaredAttrTest(DeclarativeTestBase, testing.AssertsCompiledSQL):
+    __dialect__ = 'default'
+
     def test_plain_called_repeatedly(self):
         counter = mock.Mock()
 
@@ -1386,6 +1387,116 @@ class DeclaredAttrTest(DeclarativeTestBase):
         gc_collect()
         assert "A" not in Base._decl_class_registry
         assert not Mixin.__dict__['my_prop'].reg
+
+    def test_property_noncascade(self):
+        counter = mock.Mock()
+
+        class Mixin(object):
+            @declared_attr.property
+            def my_prop(cls):
+                counter(cls)
+                return column_property(cls.x)
+
+        class A(Base, Mixin):
+            __tablename__ = 'a'
+
+            id = Column(Integer, primary_key=True)
+            x = Column(Integer)
+
+        class B(A):
+            pass
+
+        eq_(counter.mock_calls, [mock.call(A)])
+
+    def test_property_cascade(self):
+        counter = mock.Mock()
+
+        class Mixin(object):
+            @declared_attr.property.cascading
+            def my_prop(cls):
+                counter(cls)
+                return column_property(cls.x)
+
+        class A(Base, Mixin):
+            __tablename__ = 'a'
+
+            id = Column(Integer, primary_key=True)
+            x = Column(Integer)
+
+        class B(A):
+            pass
+
+        eq_(counter.mock_calls, [mock.call(A), mock.call(B)])
+
+    def test_column_pre_map(self):
+        counter = mock.Mock()
+
+        class Mixin(object):
+            @declared_attr.column
+            def my_col(cls):
+                counter(cls)
+                assert not orm_base._mapper_or_none(cls)
+                return Column('x', Integer)
+
+        class A(Base, Mixin):
+            __tablename__ = 'a'
+
+            id = Column(Integer, primary_key=True)
+
+        eq_(counter.mock_calls, [mock.call(A)])
+
+    def test_property_post_map(self):
+        counter = mock.Mock()
+
+        class Mixin(object):
+            @declared_attr.property
+            def my_prop(cls):
+                counter(cls)
+                assert orm_base._mapper_or_none(cls) is cls.__mapper__
+                return column_property(cls.id)
+
+        class A(Base, Mixin):
+            __tablename__ = 'a'
+
+            id = Column(Integer, primary_key=True)
+
+        eq_(counter.mock_calls, [mock.call(A)])
+
+    def test_column_prop(self):
+
+        # this is the use case for .property.
+        # we don't want address_count() to run against
+        # the "id" column until we know we will get the
+        # one that's mapped.
+
+        class HasAddressCount(object):
+            id = Column(Integer, primary_key=True)
+
+            @declared_attr.property
+            def address_count(cls):
+                return column_property(
+                    select([func.count(Address.id)]).
+                    where(Address.user_id == cls.id).
+                    as_scalar()
+                )
+
+        class Address(Base):
+            __tablename__ = 'address'
+            id = Column(Integer, primary_key=True)
+            user_id = Column(ForeignKey('user.id'))
+
+        class User(Base, HasAddressCount):
+            __tablename__ = 'user'
+
+        sess = Session()
+        self.assert_compile(
+            sess.query(User).having(User.address_count > 5),
+            'SELECT "user".id AS user_id, (SELECT count(address.id) AS '
+            'count_1 FROM address WHERE address.user_id = "user".id) '
+            'AS anon_1 FROM "user" HAVING (SELECT count(address.id) AS '
+            'count_1 FROM address WHERE address.user_id = "user".id) '
+            '> :param_1'
+        )
 
 
 class AbstractTest(DeclarativeTestBase):

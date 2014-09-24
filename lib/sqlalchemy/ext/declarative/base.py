@@ -32,6 +32,28 @@ def _declared_mapping_info(cls):
         return None
 
 
+def _get_immediate_cls_attr(cls, attrname):
+    """return an attribute of the class that is either present directly
+    on the class, e.g. not on a superclass, or is from a superclass but
+    this superclass is a mixin, that is, not a descendant of
+    the declarative base.
+
+    This is used to detect attributes that indicate something about
+    a mapped class independently from any mapped classes that it may
+    inherit from.
+
+    """
+    for base in cls.__mro__:
+        _is_declarative_inherits = hasattr(base, '_decl_class_registry')
+        if attrname in base.__dict__:
+            value = getattr(base, attrname)
+            if (base is cls or
+                    (base in cls.__bases__ and not _is_declarative_inherits)):
+                return value
+    else:
+        return None
+
+
 def _as_declarative(cls, classname, dict_):
     from .api import declared_attr, _memoized_declared_attr
 
@@ -47,23 +69,27 @@ def _as_declarative(cls, classname, dict_):
 
     declarative_props = (declared_attr, util.classproperty)
 
+    if _get_immediate_cls_attr(cls, '__abstract__'):
+        return
+
+    defer_map = _get_immediate_cls_attr(
+        cls, '_sa_decl_prepare_nocascade') or \
+        hasattr(cls, '_sa_decl_prepare')
+
+    if _get_immediate_cls_attr(cls, '__declare_last__'):
+        @event.listens_for(mapper, "after_configured")
+        def after_configured():
+            cls.__declare_last__()
+
+    if _get_immediate_cls_attr(cls, '__declare_first__'):
+        @event.listens_for(mapper, "before_configured")
+        def before_configured():
+            cls.__declare_first__()
+
     for base in cls.__mro__:
-        _is_declarative_inherits = hasattr(base, '_decl_class_registry')
 
-        if '__declare_last__' in base.__dict__:
-            @event.listens_for(mapper, "after_configured")
-            def go():
-                cls.__declare_last__()
-        if '__declare_first__' in base.__dict__:
-            @event.listens_for(mapper, "before_configured")
-            def go():
-                cls.__declare_first__()
-        if '__abstract__' in base.__dict__ and base.__abstract__:
-            if (base is cls or
-                    (base in cls.__bases__ and not _is_declarative_inherits)):
-                return
-
-        class_mapped = _declared_mapping_info(base) is not None
+        class_mapped = _declared_mapping_info(base) is not None and \
+            not _get_immediate_cls_attr(base, '_sa_decl_prepare_nocascade')
 
         for name, obj in vars(base).items():
             if name == '__mapper_args__':
@@ -105,7 +131,8 @@ def _as_declarative(cls, classname, dict_):
                               % (base.__name__, name, base, cls))
                 continue
             elif base is not cls:
-                # we're a mixin.
+                # we're a mixin, abstract base, or something that is
+                # acting like that for now.
                 if isinstance(obj, Column):
                     if getattr(cls, name) is not obj:
                         # if column has been overridden
@@ -132,7 +159,7 @@ def _as_declarative(cls, classname, dict_):
                         "column_property(), relationship(), etc.) must "
                         "be declared as @declared_attr callables "
                         "on declarative mixin classes.")
-                elif isinstance(obj, _memoized_declared_attr): # and \
+                elif isinstance(obj, _memoized_declared_attr):
                     if obj._cascading:
                         dict_[name] = ret = obj.__get__(obj, cls)
                     else:
@@ -166,7 +193,7 @@ def _as_declarative(cls, classname, dict_):
 
         value = dict_[k]
         if isinstance(value, declarative_props):
-            if value.defer_defer_defer:
+            if value.defer_until_mapping:
                 add_later[k] = value
             else:
                 value = getattr(cls, k)
@@ -274,19 +301,17 @@ def _as_declarative(cls, classname, dict_):
                         "specifying __table__" % c.key
                     )
 
-    if hasattr(cls, '__mapper_cls__'):
-        mapper_cls = util.unbound_method_to_callable(cls.__mapper_cls__)
-    else:
-        mapper_cls = mapper
-
     for c in cls.__bases__:
-        if _declared_mapping_info(c) is not None:
+        if _declared_mapping_info(c) is not None and \
+                not _get_immediate_cls_attr(c, '_sa_decl_prepare_nocascade'):
             inherits = c
             break
     else:
         inherits = None
 
-    if table is None and inherits is None:
+    if table is None and inherits is None and \
+            not _get_immediate_cls_attr(cls, '__no_table__'):
+
         raise exc.InvalidRequestError(
             "Class %r does not have a __table__ or __tablename__ "
             "specified and does not inherit from an existing "
@@ -325,13 +350,11 @@ def _as_declarative(cls, classname, dict_):
                         inherited_mapped_table is not inherited_table:
                     inherited_mapped_table._refresh_for_new_column(c)
 
-    defer_map = hasattr(cls, '_sa_decl_prepare')
     if defer_map:
         cfg_cls = _DeferredMapperConfig
     else:
         cfg_cls = _MapperConfig
-    mt = cfg_cls(mapper_cls,
-                 cls, table,
+    mt = cfg_cls(cls, table,
                  inherits,
                  declared_columns,
                  column_copies,
@@ -346,7 +369,7 @@ class _MapperConfig(object):
 
     mapped_table = None
 
-    def __init__(self, mapper_cls,
+    def __init__(self,
                  cls,
                  table,
                  inherits,
@@ -354,6 +377,12 @@ class _MapperConfig(object):
                  column_copies,
                  properties, mapper_args_fn,
                  add_later):
+
+        if hasattr(cls, '__mapper_cls__'):
+            mapper_cls = util.unbound_method_to_callable(cls.__mapper_cls__)
+        else:
+            mapper_cls = mapper
+
         self.mapper_cls = mapper_cls
         self.cls = cls
         self.local_table = table
@@ -427,6 +456,7 @@ class _MapperConfig(object):
         )
         for k, v in self.add_later.items():
             setattr(self.cls, k, v.fget(self.cls))
+        return self.cls.__mapper__
 
 
 class _DeferredMapperConfig(_MapperConfig):
@@ -483,7 +513,7 @@ class _DeferredMapperConfig(_MapperConfig):
 
     def map(self):
         self._configs.pop(self._cls, None)
-        super(_DeferredMapperConfig, self).map()
+        return super(_DeferredMapperConfig, self).map()
 
 
 def _add_attribute(cls, key, value):

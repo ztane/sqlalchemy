@@ -165,6 +165,10 @@ class declared_attr(interfaces._MappedAttribute, property):
         return desc.fget(cls)
 
     @classproperty
+    def cascading(cls):
+        return _memoized_declared_attr.cascading
+
+    @classproperty
     def memoized(cls):
         return _memoized_declared_attr
 
@@ -176,7 +180,7 @@ class declared_attr(interfaces._MappedAttribute, property):
     def property(cls):
         return _declared_property
 
-    defer_defer_defer = False
+    defer_until_mapping = False
 
 
 class _memoized_declared_attr(declared_attr):
@@ -186,7 +190,7 @@ class _memoized_declared_attr(declared_attr):
         self._cascading = cascading
 
     def __get__(desc, self, cls):
-        if desc.defer_defer_defer:
+        if desc.defer_until_mapping:
             return desc
         elif cls in desc.reg:
             return desc.reg[cls]
@@ -204,7 +208,7 @@ class _declared_column(_memoized_declared_attr):
 
 
 class _declared_property(_memoized_declared_attr):
-    defer_defer_defer = True
+    defer_until_mapping = True
 
 
 
@@ -392,9 +396,11 @@ class AbstractConcreteBase(ConcreteBase):
     ``__declare_last__()`` function, which is essentially
     a hook for the :meth:`.after_configured` event.
 
-    :class:`.AbstractConcreteBase` does not produce a mapped
-    table for the class itself.  Compare to :class:`.ConcreteBase`,
-    which does.
+    :class:`.AbstractConcreteBase` does produce a mapped class
+    for the base class, however it is not persisted to any table; it
+    is instead mapped directly to the "polymorphic" selectable directly
+    and is only used for selecting.  Compare to :class:`.ConcreteBase`,
+    which does create a persisted table for the base class.
 
     Example::
 
@@ -408,20 +414,72 @@ class AbstractConcreteBase(ConcreteBase):
             employee_id = Column(Integer, primary_key=True)
             name = Column(String(50))
             manager_data = Column(String(40))
+
             __mapper_args__ = {
-                            'polymorphic_identity':'manager',
-                            'concrete':True}
+                'polymorphic_identity':'manager',
+                'concrete':True}
+
+    The abstract base class is handled by declarative in a special way;
+    at class configuration time, it behaves like a declarative mixin
+    or an ``__abstract__`` base class.   Once classes are configured
+    and mappings are produced, it then gets mapped itself, but
+    after all of its decscendants.  This is a very unique system of mapping
+    not found in any other SQLAlchemy system.
+
+    Using this approach, we can specify columns and properties
+    that will take place on mapped subclasses, in the way that
+    we normally do as in :ref:`declarative_mixins``::
+
+        class Company(Base):
+            __tablename__ = 'company'
+            id = Column(Integer, primary_key=True)
+
+        class Employee(AbstractConcreteBase, Base):
+            employee_id = Column(Integer, primary_key=True)
+
+            @declared_attr
+            def company_id(cls):
+                return Column(ForeignKey('company.id'))
+
+            @declared_attr
+            def company(cls):
+                return relationship("Company")
+
+        class Manager(Employee):
+            __tablename__ = 'manager'
+
+            name = Column(String(50))
+            manager_data = Column(String(40))
+
+            __mapper_args__ = {
+                'polymorphic_identity':'manager',
+                'concrete':True}
+
+    When we make use of our mappings however, both ``Manager`` and
+    ``Employee`` will have an independently usable ``.company`` attribute::
+
+        session.query(Employee).filter(Employee.company.has(id=5))
+
+    .. versionchanged:: 1.0.0 - The mechanics of :class:`.AbstractConcreteBase`
+       have been reworked to support relationships established directly
+       on the abstract base, without any special configurational steps.
+
 
     """
 
-    __abstract__ = True
+    __no_table__ = True
 
     @classmethod
     def __declare_first__(cls):
-        if hasattr(cls, '__mapper__'):
+        cls._sa_decl_prepare_nocascade()
+
+    @classmethod
+    def _sa_decl_prepare_nocascade(cls):
+        if getattr(cls, '__mapper__', None):
             return
 
-        clsregistry.add_class(cls.__name__, cls)
+        to_map = _DeferredMapperConfig.config_for_cls(cls)
+
         # can't rely on 'self_and_descendants' here
         # since technically an immediate subclass
         # might not be mapped, but a subclass
@@ -435,7 +493,18 @@ class AbstractConcreteBase(ConcreteBase):
             if mn is not None:
                 mappers.append(mn)
         pjoin = cls._create_polymorphic_union(mappers)
-        cls.__mapper__ = m = mapper(cls, pjoin, polymorphic_on=pjoin.c.type)
+
+        to_map.local_table = pjoin
+
+        m_args = to_map.mapper_args_fn or dict
+
+        def mapper_args():
+            args = m_args()
+            args['polymorphic_on'] = pjoin.c.type
+            return args
+        to_map.mapper_args_fn = mapper_args
+
+        m = to_map.map()
 
         for scls in cls.__subclasses__():
             sm = _mapper_or_none(scls)
