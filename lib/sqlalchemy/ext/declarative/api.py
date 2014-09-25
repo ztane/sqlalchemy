@@ -13,7 +13,7 @@ from ...orm import synonym as _orm_synonym, mapper,\
     interfaces, properties
 from ...orm.util import polymorphic_union
 from ...orm.base import _mapper_or_none
-from ...util import OrderedDict, classproperty
+from ...util import OrderedDict, classproperty, hybridmethod, hybridproperty
 from ... import exc
 import weakref
 
@@ -157,59 +157,48 @@ class declared_attr(interfaces._MappedAttribute, property):
 
     """
 
-    def __init__(self, fget, *arg, **kw):
-        super(declared_attr, self).__init__(fget, *arg, **kw)
+    def __init__(self, fget, cascading=False, defer_until_mapping=False):
+        super(declared_attr, self).__init__(fget)
         self.__doc__ = fget.__doc__
+        self._reg = weakref.WeakKeyDictionary()
+        self._cascading = cascading
+        self._defer_until_mapping = defer_until_mapping
 
     def __get__(desc, self, cls):
-        return desc.fget(cls)
+        if desc._defer_until_mapping:
+            return desc
+        elif cls in desc._reg:
+            return desc._reg[cls]
+        else:
+            desc._reg[cls] = obj = desc.fget(cls)
+            return obj
 
-    @classproperty
+    @hybridmethod
+    def _stateful(cls, **kw):
+        return _stateful_declared_attr(**kw)
+
+    @hybridproperty
     def cascading(cls):
-        return _memoized_declared_attr.cascading
+        return cls._stateful(cascading=True)
 
-    @classproperty
-    def memoized(cls):
-        return _memoized_declared_attr
-
-    @classproperty
-    def column(cls):
-        return _declared_column
-
-    @classproperty
-    def property(cls):
-        return _declared_property
+    @hybridproperty
+    def after_mapping(cls):
+        return cls._stateful(defer_until_mapping=True)
 
     defer_until_mapping = False
 
 
-class _memoized_declared_attr(declared_attr):
-    def __init__(self, fget, cascading=False):
-        super(_memoized_declared_attr, self).__init__(fget)
-        self.reg = weakref.WeakKeyDictionary()
-        self._cascading = cascading
+class _stateful_declared_attr(declared_attr):
+    def __init__(self, **kw):
+        self.kw = kw
 
-    def __get__(desc, self, cls):
-        if desc.defer_until_mapping:
-            return desc
-        elif cls in desc.reg:
-            return desc.reg[cls]
-        else:
-            desc.reg[cls] = obj = desc.fget(cls)
-            return obj
+    def _stateful(self, **kw):
+        new_kw = self.kw.copy()
+        new_kw.update(kw)
+        return _stateful_declared_attr(**new_kw)
 
-    @classproperty
-    def cascading(cls):
-        return lambda decorated: cls(decorated, cascading=True)
-
-
-class _declared_column(_memoized_declared_attr):
-    pass
-
-
-class _declared_property(_memoized_declared_attr):
-    defer_until_mapping = True
-
+    def __call__(self, fn):
+        return declared_attr(fn, **self.kw)
 
 
 def declarative_base(bind=None, metadata=None, mapper=None, cls=object,

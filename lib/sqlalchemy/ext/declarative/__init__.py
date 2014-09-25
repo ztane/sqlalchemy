@@ -921,7 +921,7 @@ reference a common target class via many-to-one::
         id = Column(Integer, primary_key=True)
 
 When using a mixin to specify a relationship or other mapper property,
-the :meth:`.declared_attr.property` modifier is often helpful, as it
+the :meth:`.declared_attr.after_mapping` modifier is often helpful, as it
 indicates that the callable should not be invoked at all until the
 target class is fully mapped::
 
@@ -930,7 +930,7 @@ target class is fully mapped::
         def target_id(cls):
             return Column('target_id', ForeignKey('target.id'))
 
-        @declared_attr.property
+        @declared_attr.after_mapping
         def target(cls):
             return relationship("Target")
 
@@ -1019,14 +1019,14 @@ requirement so that no reliance on copying is needed::
 
 More advanced properties like that of a :func:`.column_property` which refers
 to other columns that are mapped to the class should make use of
-:meth:`.declared_attr.property`, to ensure that the function is invoked
+:meth:`.declared_attr.after_mapping`, to ensure that the function is invoked
 only after all columns are mapped on the target class::
 
     class SomethingMixin(object):
         x = Column(Integer)
         y = Column(Integer)
 
-        @declared_attr.property
+        @declared_attr.after_mapping
         def x_plus_y(cls):
             return column_property(cls.x + cls.y)
 

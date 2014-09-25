@@ -1305,42 +1305,11 @@ class DeclarativeMixinPropertyTest(DeclarativeTestBase):
 class DeclaredAttrTest(DeclarativeTestBase, testing.AssertsCompiledSQL):
     __dialect__ = 'default'
 
-    def test_plain_called_repeatedly(self):
+    def test_singleton_behavior(self):
         counter = mock.Mock()
 
         class Mixin(object):
             @declared_attr
-            def my_prop(cls):
-                counter(cls)
-                return Column('x', Integer)
-
-        class A(Base, Mixin):
-            __tablename__ = 'a'
-            id = Column(Integer, primary_key=True)
-
-            @declared_attr
-            def my_other_prop(cls):
-                return column_property(cls.my_prop + 5)
-        eq_(counter.mock_calls, [mock.call(A), mock.call(A)])
-
-        class B(Base, Mixin):
-            __tablename__ = 'b'
-            id = Column(Integer, primary_key=True)
-
-            @declared_attr
-            def my_other_prop(cls):
-                return column_property(cls.my_prop + 5)
-
-        eq_(
-            counter.mock_calls,
-            [mock.call(A), mock.call(A), mock.call(B), mock.call(B)]
-        )
-
-    def test_singleton_called_once(self):
-        counter = mock.Mock()
-
-        class Mixin(object):
-            @declared_attr.memoized
             def my_prop(cls):
                 counter(cls)
                 return Column('x', Integer)
@@ -1369,7 +1338,7 @@ class DeclaredAttrTest(DeclarativeTestBase, testing.AssertsCompiledSQL):
         counter = mock.Mock()
 
         class Mixin(object):
-            @declared_attr.memoized
+            @declared_attr
             def my_prop(cls):
                 counter(cls.__name__)
                 return Column('x', Integer)
@@ -1386,13 +1355,13 @@ class DeclaredAttrTest(DeclarativeTestBase, testing.AssertsCompiledSQL):
         del A
         gc_collect()
         assert "A" not in Base._decl_class_registry
-        assert not Mixin.__dict__['my_prop'].reg
+        assert not Mixin.__dict__['my_prop']._reg
 
     def test_property_noncascade(self):
         counter = mock.Mock()
 
         class Mixin(object):
-            @declared_attr.property
+            @declared_attr.after_mapping
             def my_prop(cls):
                 counter(cls)
                 return column_property(cls.x)
@@ -1412,7 +1381,7 @@ class DeclaredAttrTest(DeclarativeTestBase, testing.AssertsCompiledSQL):
         counter = mock.Mock()
 
         class Mixin(object):
-            @declared_attr.property.cascading
+            @declared_attr.after_mapping.cascading
             def my_prop(cls):
                 counter(cls)
                 return column_property(cls.x)
@@ -1432,7 +1401,7 @@ class DeclaredAttrTest(DeclarativeTestBase, testing.AssertsCompiledSQL):
         counter = mock.Mock()
 
         class Mixin(object):
-            @declared_attr.column
+            @declared_attr
             def my_col(cls):
                 counter(cls)
                 assert not orm_base._mapper_or_none(cls)
@@ -1449,7 +1418,7 @@ class DeclaredAttrTest(DeclarativeTestBase, testing.AssertsCompiledSQL):
         counter = mock.Mock()
 
         class Mixin(object):
-            @declared_attr.property
+            @declared_attr.after_mapping
             def my_prop(cls):
                 counter(cls)
                 assert orm_base._mapper_or_none(cls) is cls.__mapper__
@@ -1464,7 +1433,7 @@ class DeclaredAttrTest(DeclarativeTestBase, testing.AssertsCompiledSQL):
 
     def test_column_prop(self):
 
-        # this is the use case for .property.
+        # this is the use case for .after_mapping
         # we don't want address_count() to run against
         # the "id" column until we know we will get the
         # one that's mapped.
@@ -1472,7 +1441,7 @@ class DeclaredAttrTest(DeclarativeTestBase, testing.AssertsCompiledSQL):
         class HasAddressCount(object):
             id = Column(Integer, primary_key=True)
 
-            @declared_attr.property
+            @declared_attr.after_mapping
             def address_count(cls):
                 return column_property(
                     select([func.count(Address.id)]).

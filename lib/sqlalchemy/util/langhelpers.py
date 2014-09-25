@@ -1090,10 +1090,21 @@ class classproperty(property):
         return desc.fget(cls)
 
 
+class hybridproperty(object):
+    def __init__(self, func):
+        self.func = func
+
+    def __get__(self, instance, owner):
+        if instance is None:
+            return self.func(owner)
+        else:
+            return self.func(instance)
+
+
 class hybridmethod(object):
     """Decorate a function as cls- or instance- level."""
 
-    def __init__(self, func, expr=None):
+    def __init__(self, func):
         self.func = func
 
     def __get__(self, instance, owner):

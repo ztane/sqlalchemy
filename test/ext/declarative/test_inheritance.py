@@ -1327,7 +1327,7 @@ class ConcreteExtensionConfigTest(
                 counter(cls, "something")
                 return relationship("Something")
 
-            @declared_attr.property
+            @declared_attr.after_mapping
             def something_else(cls):
                 counter(cls, "something_else")
                 return relationship("Something")

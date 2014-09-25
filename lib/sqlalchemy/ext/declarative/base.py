@@ -55,7 +55,7 @@ def _get_immediate_cls_attr(cls, attrname):
 
 
 def _as_declarative(cls, classname, dict_):
-    from .api import declared_attr, _memoized_declared_attr
+    from .api import declared_attr
 
     # dict_ will be a dictproxy, which we can't write to, and we need to!
     dict_ = dict(dict_)
@@ -159,17 +159,17 @@ def _as_declarative(cls, classname, dict_):
                         "column_property(), relationship(), etc.) must "
                         "be declared as @declared_attr callables "
                         "on declarative mixin classes.")
-                elif isinstance(obj, _memoized_declared_attr):
-                    if obj._cascading:
-                        dict_[name] = ret = obj.__get__(obj, cls)
-                    else:
-                        dict_[name] = ret = getattr(cls, name)
-                    if isinstance(ret, (Column, MapperProperty)) and \
-                            ret.doc is None:
-                        ret.doc = obj.__doc__
                 elif isinstance(obj, declarative_props):
-                    dict_[name] = ret = \
-                        column_copies[obj] = getattr(cls, name)
+                    if isinstance(obj, util.classproperty):
+                        util.warn_deprecated(
+                            "Use of sqlalchemy.util.classproperty on "
+                            "declarative classes is deprecated.")
+                    if obj._cascading:
+                        dict_[name] = column_copies[obj] = \
+                            ret = obj.__get__(obj, cls)
+                    else:
+                        dict_[name] = column_copies[obj] = \
+                            ret = getattr(cls, name)
                     if isinstance(ret, (Column, MapperProperty)) and \
                             ret.doc is None:
                         ret.doc = obj.__doc__
@@ -193,7 +193,7 @@ def _as_declarative(cls, classname, dict_):
 
         value = dict_[k]
         if isinstance(value, declarative_props):
-            if value.defer_until_mapping:
+            if value._defer_until_mapping:
                 add_later[k] = value
             else:
                 value = getattr(cls, k)
