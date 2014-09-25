@@ -8,12 +8,12 @@
 
 
 from ...schema import Table, MetaData
-from ...orm import synonym as _orm_synonym, mapper,\
+from ...orm import synonym as _orm_synonym, \
     comparable_property,\
     interfaces, properties
 from ...orm.util import polymorphic_union
 from ...orm.base import _mapper_or_none
-from ...util import OrderedDict, classproperty, hybridmethod, hybridproperty
+from ...util import OrderedDict, hybridmethod, hybridproperty
 from ... import exc
 import weakref
 
@@ -21,7 +21,6 @@ from .base import _as_declarative, \
     _declarative_constructor,\
     _DeferredMapperConfig, _add_attribute
 from .clsregistry import _class_resolver
-from . import clsregistry
 
 
 def instrument_declarative(cls, registry, metadata):
