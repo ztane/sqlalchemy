@@ -10,10 +10,11 @@
 from ...schema import Table, MetaData
 from ...orm import synonym as _orm_synonym, \
     comparable_property,\
-    interfaces, properties
+    interfaces, properties, attributes
 from ...orm.util import polymorphic_union
 from ...orm.base import _mapper_or_none
 from ...util import OrderedDict, hybridmethod, hybridproperty
+from ... import util
 from ... import exc
 import weakref
 
@@ -156,20 +157,30 @@ class declared_attr(interfaces._MappedAttribute, property):
 
     """
 
-    def __init__(self, fget, cascading=False, defer_until_mapping=False):
+    def __init__(self, fget, cascading=False):
         super(declared_attr, self).__init__(fget)
         self.__doc__ = fget.__doc__
-        self._reg = weakref.WeakKeyDictionary()
         self._cascading = cascading
-        self._defer_until_mapping = defer_until_mapping
 
     def __get__(desc, self, cls):
-        if desc._defer_until_mapping:
-            return desc
-        elif cls in desc._reg:
-            return desc._reg[cls]
+        # use the ClassManager for memoization of values.  This is better than
+        # adding yet another attribute onto the class, or using weakrefs
+        # here which are slow and take up memory.  It also allows us to
+        # warn for non-mapped use of declared_attr.
+
+        manager = attributes.manager_of_class(cls)
+        if manager is None:
+            util.warn(
+                "Unmanaged access of declarative attribute %s from "
+                "non-mapped class %s" %
+                (desc.fget.__name__, cls.__name__))
+            return desc.fget(cls)
+
+        key = ('declared_attr', id(desc))
+        if key in manager.info:
+            return manager.info[key]
         else:
-            desc._reg[cls] = obj = desc.fget(cls)
+            manager.info[key] = obj = desc.fget(cls)
             return obj
 
     @hybridmethod
@@ -178,13 +189,45 @@ class declared_attr(interfaces._MappedAttribute, property):
 
     @hybridproperty
     def cascading(cls):
+        """Mark a :class:`.declared_attr` as cascading.
+
+        This is a special-use modifier which indicates that a column
+        or MapperProperty-based declared attribute should be configured
+        distinctly per mapped subclass, within a mapped-inheritance scenario.
+
+        Below, both MyClass as well as MySubClass will have a distinct
+        ``id`` Column object established::
+
+            class HasSomeAttribute(object):
+                @declared_attr.cascading
+                def some_id(cls):
+                    if has_inherited_table(cls):
+                        return Column(ForeignKey('myclass.id'), primary_key=True)
+                    else:
+                        return Column(Integer, primary_key=True)
+
+                    return Column('id', Integer, primary_key=True)
+
+            class MyClass(HasSomeAttribute, Base):
+                # ...
+
+            class MySubClass(MyClass):
+                # ...
+
+        The behavior of the above configuration is that ``MySubClass``
+        will refer to both its own ``id`` column as well as that of
+        ``MyClass`` underneath the attribute named ``some_id``.
+
+        .. seealso::
+
+            :ref:`declarative_inheritance`
+
+            :ref:`mixin_inheritance_columns`
+
+
+        """
         return cls._stateful(cascading=True)
 
-    @hybridproperty
-    def after_mapping(cls):
-        return cls._stateful(defer_until_mapping=True)
-
-    defer_until_mapping = False
 
 
 class _stateful_declared_attr(declared_attr):

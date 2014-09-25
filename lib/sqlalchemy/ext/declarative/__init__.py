@@ -920,20 +920,6 @@ reference a common target class via many-to-one::
         __tablename__ = 'target'
         id = Column(Integer, primary_key=True)
 
-When using a mixin to specify a relationship or other mapper property,
-the :meth:`.declared_attr.after_mapping` modifier is often helpful, as it
-indicates that the callable should not be invoked at all until the
-target class is fully mapped::
-
-    class RefTargetMixin(object):
-        @declared_attr
-        def target_id(cls):
-            return Column('target_id', ForeignKey('target.id'))
-
-        @declared_attr.after_mapping
-        def target(cls):
-            return relationship("Target")
-
 
 Using Advanced Relationship Arguments (e.g. ``primaryjoin``, etc.)
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -1017,16 +1003,21 @@ requirement so that no reliance on copying is needed::
     class Something(SomethingMixin, Base):
         __tablename__ = "something"
 
-More advanced properties like that of a :func:`.column_property` which refers
-to other columns that are mapped to the class should make use of
-:meth:`.declared_attr.after_mapping`, to ensure that the function is invoked
-only after all columns are mapped on the target class::
+A :func:`.column_property` or other construct which refers
+to other columns that are mapped to the class should ensure that all
+target columns are set up as :class:`.declared_attr`, to ensure that
+these functions call upon the correct column::
 
     class SomethingMixin(object):
-        x = Column(Integer)
-        y = Column(Integer)
+        @declared_attr
+        def x(cls):
+            return Column(Integer)
 
-        @declared_attr.after_mapping
+        @declared_attr
+        def y(cls):
+            return Column(Integer)
+
+        @declared_attr
         def x_plus_y(cls):
             return column_property(cls.x + cls.y)
 
@@ -1166,6 +1157,8 @@ agaisnt the parent::
     class Engineer(Person):
         primary_language = Column(String(50))
         __mapper_args__ = {'polymorphic_identity': 'engineer'}
+
+.. _mixin_inheritance_columns:
 
 Mixing in Columns in Inheritance Scenarios
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

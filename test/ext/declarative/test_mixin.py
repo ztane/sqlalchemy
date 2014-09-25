@@ -1305,7 +1305,7 @@ class DeclarativeMixinPropertyTest(DeclarativeTestBase):
 class DeclaredAttrTest(DeclarativeTestBase, testing.AssertsCompiledSQL):
     __dialect__ = 'default'
 
-    def test_singleton_behavior(self):
+    def test_singleton_behavior_within_decl(self):
         counter = mock.Mock()
 
         class Mixin(object):
@@ -1332,7 +1332,30 @@ class DeclaredAttrTest(DeclarativeTestBase, testing.AssertsCompiledSQL):
             def my_other_prop(cls):
                 return column_property(cls.my_prop + 5)
 
-        eq_(counter.mock_calls, [mock.call(A), mock.call(B)])
+        eq_(
+            counter.mock_calls,
+            [mock.call(A), mock.call(B)])
+
+        # this is why we need singleton-per-class behavior.   We get
+        # an un-bound "x" column otherwise here, because my_prop() generates
+        # multiple columns.
+        a_col = A.my_other_prop.__clause_element__().element.left
+        b_col = B.my_other_prop.__clause_element__().element.left
+        is_(a_col.table, A.__table__)
+        is_(b_col.table, B.__table__)
+        is_(a_col, A.__table__.c.x)
+        is_(b_col, B.__table__.c.x)
+
+        s = Session()
+        self.assert_compile(
+            s.query(A),
+            "SELECT a.x AS a_x, a.x + :x_1 AS anon_1, a.id AS a_id FROM a"
+        )
+        self.assert_compile(
+            s.query(B),
+            "SELECT b.x AS b_x, b.x + :x_1 AS anon_1, b.id AS b_id FROM b"
+        )
+
 
     def test_singleton_gc(self):
         counter = mock.Mock()
@@ -1355,16 +1378,28 @@ class DeclaredAttrTest(DeclarativeTestBase, testing.AssertsCompiledSQL):
         del A
         gc_collect()
         assert "A" not in Base._decl_class_registry
-        assert not Mixin.__dict__['my_prop']._reg
+
+    def test_can_we_access_the_mixin_straight(self):
+        class Mixin(object):
+            @declared_attr
+            def my_prop(cls):
+                return Column('x', Integer)
+
+        assert_raises_message(
+            sa.exc.SAWarning,
+            "Unmanaged access of declarative attribute my_prop "
+            "from non-mapped class Mixin",
+            getattr, Mixin, "my_prop"
+        )
 
     def test_property_noncascade(self):
         counter = mock.Mock()
 
         class Mixin(object):
-            @declared_attr.after_mapping
+            @declared_attr
             def my_prop(cls):
                 counter(cls)
-                return column_property(cls.x)
+                return column_property(cls.x + 2)
 
         class A(Base, Mixin):
             __tablename__ = 'a'
@@ -1381,10 +1416,10 @@ class DeclaredAttrTest(DeclarativeTestBase, testing.AssertsCompiledSQL):
         counter = mock.Mock()
 
         class Mixin(object):
-            @declared_attr.after_mapping.cascading
+            @declared_attr.cascading
             def my_prop(cls):
                 counter(cls)
-                return column_property(cls.x)
+                return column_property(cls.x + 2)
 
         class A(Base, Mixin):
             __tablename__ = 'a'
@@ -1414,34 +1449,20 @@ class DeclaredAttrTest(DeclarativeTestBase, testing.AssertsCompiledSQL):
 
         eq_(counter.mock_calls, [mock.call(A)])
 
-    def test_property_post_map(self):
-        counter = mock.Mock()
-
-        class Mixin(object):
-            @declared_attr.after_mapping
-            def my_prop(cls):
-                counter(cls)
-                assert orm_base._mapper_or_none(cls) is cls.__mapper__
-                return column_property(cls.id)
-
-        class A(Base, Mixin):
-            __tablename__ = 'a'
-
-            id = Column(Integer, primary_key=True)
-
-        eq_(counter.mock_calls, [mock.call(A)])
-
     def test_column_prop(self):
-
-        # this is the use case for .after_mapping
-        # we don't want address_count() to run against
-        # the "id" column until we know we will get the
-        # one that's mapped.
+        # this is one use case where we may consider
+        # a modifier like @declared_attr.after_mapping so that
+        # we can access User.id within address_count(); however,
+        # we instead have made HasAddressCount.id a
+        # @declared_attr itself which allows it to invoke predictably
+        # and without the need for copying.
 
         class HasAddressCount(object):
-            id = Column(Integer, primary_key=True)
+            @declared_attr
+            def id(cls):
+                return Column(Integer, primary_key=True)
 
-            @declared_attr.after_mapping
+            @declared_attr
             def address_count(cls):
                 return column_property(
                     select([func.count(Address.id)]).
@@ -1460,9 +1481,10 @@ class DeclaredAttrTest(DeclarativeTestBase, testing.AssertsCompiledSQL):
         sess = Session()
         self.assert_compile(
             sess.query(User).having(User.address_count > 5),
-            'SELECT "user".id AS user_id, (SELECT count(address.id) AS '
+            'SELECT (SELECT count(address.id) AS '
             'count_1 FROM address WHERE address.user_id = "user".id) '
-            'AS anon_1 FROM "user" HAVING (SELECT count(address.id) AS '
+            'AS anon_1, "user".id AS user_id FROM "user" '
+            'HAVING (SELECT count(address.id) AS '
             'count_1 FROM address WHERE address.user_id = "user".id) '
             '> :param_1'
         )

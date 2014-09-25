@@ -19,6 +19,7 @@ from ... import event
 from . import clsregistry
 import collections
 import weakref
+from sqlalchemy.orm import instrumentation
 
 
 def _declared_mapping_info(cls):
@@ -85,6 +86,8 @@ def _as_declarative(cls, classname, dict_):
         @event.listens_for(mapper, "before_configured")
         def before_configured():
             cls.__declare_first__()
+
+    instrumentation.register_class(cls)
 
     for base in cls.__mro__:
 
@@ -193,10 +196,7 @@ def _as_declarative(cls, classname, dict_):
 
         value = dict_[k]
         if isinstance(value, declarative_props):
-            if value._defer_until_mapping:
-                add_later[k] = value
-            else:
-                value = getattr(cls, k)
+            value = getattr(cls, k)
 
         elif isinstance(value, QueryableAttribute) and \
                 value.class_ is not cls and \
@@ -455,7 +455,7 @@ class _MapperConfig(object):
             **mapper_args
         )
         for k, v in self.add_later.items():
-            setattr(self.cls, k, v.fget(self.cls))
+            setattr(self.cls, k, v.__get__(v, self.cls))
         return self.cls.__mapper__
 
 
