@@ -1327,7 +1327,7 @@ class ConcreteExtensionConfigTest(
                 counter(cls, "something")
                 return relationship("Something")
 
-            @declared_attr.after_mapping
+            @declared_attr
             def something_else(cls):
                 counter(cls, "something_else")
                 return relationship("Something")
@@ -1388,15 +1388,3 @@ class ConcreteExtensionConfigTest(
             "WHERE something.id = pjoin.something_id AND something.id = :id_1)"
         )
 
-        # with order here, plain declared_attr "something" is called
-        # in order of classes being scanned; property declared attr
-        # "something_else" is called in order of classes being mapped
-        eq_(
-            counter.mock_calls,
-            [
-                mock.call(AbstractConcreteAbstraction, "something"),
-                mock.call(ConcreteConcreteAbstraction, "something"),
-                mock.call(ConcreteConcreteAbstraction, "something_else"),
-                mock.call(AbstractConcreteAbstraction, "something_else"),
-            ]
-        )

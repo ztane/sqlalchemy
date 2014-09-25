@@ -1003,24 +1003,23 @@ requirement so that no reliance on copying is needed::
     class Something(SomethingMixin, Base):
         __tablename__ = "something"
 
-A :func:`.column_property` or other construct which refers
-to other columns that are mapped to the class should ensure that all
-target columns are set up as :class:`.declared_attr`, to ensure that
-these functions call upon the correct column::
+The :func:`.column_property` or other construct may refer
+to other columns from the mixin.  These are copied ahead of time before
+the :class:`.declared_attr` is invoked::
 
     class SomethingMixin(object):
-        @declared_attr
-        def x(cls):
-            return Column(Integer)
+        x = Column(Integer)
 
-        @declared_attr
-        def y(cls):
-            return Column(Integer)
+        y = Column(Integer)
 
         @declared_attr
         def x_plus_y(cls):
             return column_property(cls.x + cls.y)
 
+
+.. versionchanged:: 1.0.0 mixin columns are copied to the final mapped class
+   so that :class:`.declared_attr` methods can access the actual column
+   that will be mapped.
 
 Mixing in Association Proxy and Other Attributes
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -1110,9 +1109,12 @@ will determine the name of the table used for each class in an inheritance
 hierarchy, as well as whether a class has its own distinct table.
 
 This is achieved using the :class:`.declared_attr` indicator in conjunction
-with a methed named ``__tablename__()``.   Declarative will always
-invoke this function **for each class in the hierarchy**, so we need
-to ensure that it has an answer for each class.
+with a method named ``__tablename__()``.   Declarative will always
+invoke :class:`.declared_attr` for the special names
+``__tablename__``, ``__mapper_args__`` and ``__table_args__``
+function **for each mapped class in the hierarchy**.   The function therefore
+needs to expect to receive each class individually and to provide the
+correct answer for each.
 
 For example, to create a mixin that gives every class a simple table
 name based on class name::
@@ -1163,12 +1165,12 @@ agaisnt the parent::
 Mixing in Columns in Inheritance Scenarios
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
-In constrast to how ``__tablename__`` is handled when used with
-:func:`.declared_attr`, when we mix in columns and properties (e.g.
+In constrast to how ``__tablename__`` and other special names are handled when
+used with :class:`.declared_attr`, when we mix in columns and properties (e.g.
 relationships, column properties, etc.), the function is only
-invoked for the *base class* in the hierarchy, provided concrete inheritance
-is not present.  Below, only the ``Person`` class will receive a columnn
-callde ``id``; the mapping will fail on ``Engineer``, which is not given
+invoked for the *base class* in the hierarchy.  Below, only the ``Person``
+class will receive a column
+called ``id``; the mapping will fail on ``Engineer``, which is not given
 a primary key::
 
     class HasId(object):

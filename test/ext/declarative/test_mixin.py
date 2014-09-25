@@ -1449,21 +1449,19 @@ class DeclaredAttrTest(DeclarativeTestBase, testing.AssertsCompiledSQL):
 
         eq_(counter.mock_calls, [mock.call(A)])
 
-    def test_column_prop(self):
-        # this is one use case where we may consider
-        # a modifier like @declared_attr.after_mapping so that
-        # we can access User.id within address_count(); however,
-        # we instead have made HasAddressCount.id a
-        # @declared_attr itself which allows it to invoke predictably
-        # and without the need for copying.
+    def test_mixin_attr_refers_to_column_copies(self):
+        # this @declared_attr can refer to User.id
+        # freely because we now do the "copy column" operation
+        # before the declared_attr is invoked.
+
+        counter = mock.Mock()
 
         class HasAddressCount(object):
-            @declared_attr
-            def id(cls):
-                return Column(Integer, primary_key=True)
+            id = Column(Integer, primary_key=True)
 
             @declared_attr
             def address_count(cls):
+                counter(cls.id)
                 return column_property(
                     select([func.count(Address.id)]).
                     where(Address.user_id == cls.id).
@@ -1477,6 +1475,11 @@ class DeclaredAttrTest(DeclarativeTestBase, testing.AssertsCompiledSQL):
 
         class User(Base, HasAddressCount):
             __tablename__ = 'user'
+
+        eq_(
+            counter.mock_calls,
+            [mock.call(User.id)]
+        )
 
         sess = Session()
         self.assert_compile(

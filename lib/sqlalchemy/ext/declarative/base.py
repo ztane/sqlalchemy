@@ -94,6 +94,30 @@ def _as_declarative(cls, classname, dict_):
         class_mapped = _declared_mapping_info(base) is not None and \
             not _get_immediate_cls_attr(base, '_sa_decl_prepare_nocascade')
 
+        if not class_mapped and base is not cls:
+            for name, obj in vars(base).items():
+                if isinstance(obj, Column):
+                    if getattr(cls, name) is not obj:
+                        # if column has been overridden
+                        # (like by the InstrumentedAttribute of the
+                        # superclass), skip
+                        continue
+                    if obj.foreign_keys:
+                        raise exc.InvalidRequestError(
+                            "Columns with foreign keys to other columns "
+                            "must be declared as @declared_attr callables "
+                            "on declarative mixin classes. ")
+                    if name not in dict_ and not (
+                            '__table__' in dict_ and
+                            (obj.name or name) in dict_['__table__'].c
+                    ) and name not in potential_columns:
+                        potential_columns[name] = \
+                            column_copies[obj] = \
+                            obj.copy()
+                        column_copies[obj]._creation_order = \
+                            obj._creation_order
+                        setattr(cls, name, column_copies[obj])
+
         for name, obj in vars(base).items():
             if name == '__mapper_args__':
                 if not mapper_args_fn and (
@@ -137,25 +161,7 @@ def _as_declarative(cls, classname, dict_):
                 # we're a mixin, abstract base, or something that is
                 # acting like that for now.
                 if isinstance(obj, Column):
-                    if getattr(cls, name) is not obj:
-                        # if column has been overridden
-                        # (like by the InstrumentedAttribute of the
-                        # superclass), skip
-                        continue
-                    if obj.foreign_keys:
-                        raise exc.InvalidRequestError(
-                            "Columns with foreign keys to other columns "
-                            "must be declared as @declared_attr callables "
-                            "on declarative mixin classes. ")
-                    if name not in dict_ and not (
-                            '__table__' in dict_ and
-                            (obj.name or name) in dict_['__table__'].c
-                    ) and name not in potential_columns:
-                        potential_columns[name] = \
-                            column_copies[obj] = \
-                            obj.copy()
-                        column_copies[obj]._creation_order = \
-                            obj._creation_order
+                    continue
                 elif isinstance(obj, MapperProperty):
                     raise exc.InvalidRequestError(
                         "Mapper properties (i.e. deferred,"
