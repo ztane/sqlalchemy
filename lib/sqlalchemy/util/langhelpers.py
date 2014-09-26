@@ -1096,7 +1096,9 @@ class hybridproperty(object):
 
     def __get__(self, instance, owner):
         if instance is None:
-            return self.func(owner)
+            clsval = self.func(owner)
+            clsval.__doc__ = self.func.__doc__
+            return clsval
         else:
             return self.func(instance)
 

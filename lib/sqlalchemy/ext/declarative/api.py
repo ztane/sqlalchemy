@@ -216,9 +216,11 @@ class declared_attr(interfaces._MappedAttribute, property):
                     return Column('id', Integer, primary_key=True)
 
             class MyClass(HasSomeAttribute, Base):
+                ""
                 # ...
 
             class MySubClass(MyClass):
+                ""
                 # ...
 
         The behavior of the above configuration is that ``MySubClass``
@@ -465,7 +467,7 @@ class AbstractConcreteBase(ConcreteBase):
 
     Using this approach, we can specify columns and properties
     that will take place on mapped subclasses, in the way that
-    we normally do as in :ref:`declarative_mixins``::
+    we normally do as in :ref:`declarative_mixins`::
 
         class Company(Base):
             __tablename__ = 'company'

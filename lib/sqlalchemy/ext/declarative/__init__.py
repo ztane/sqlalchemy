@@ -1167,14 +1167,14 @@ Mixing in Columns in Inheritance Scenarios
 
 In constrast to how ``__tablename__`` and other special names are handled when
 used with :class:`.declared_attr`, when we mix in columns and properties (e.g.
-relationships, column properties, etc.), the function is only
-invoked for the *base class* in the hierarchy.  Below, only the ``Person``
-class will receive a column
+relationships, column properties, etc.), the function is
+invoked for the **base class only** in the hierarchy.  Below, only the
+``Person`` class will receive a column
 called ``id``; the mapping will fail on ``Engineer``, which is not given
 a primary key::
 
     class HasId(object):
-        @declared_attr.cascading
+        @declared_attr
         def id(cls):
             return Column('id', Integer, primary_key=True)
 
@@ -1192,7 +1192,7 @@ It is usually the case in joined-table inheritance that we want distinctly
 named columns on each subclass.  However in this case, we may want to have
 an ``id`` column on every table, and have them refer to each other via
 foreign key.  We can achieve this as a mixin by using the
-:meth:`.declared_attr.cascading` modifier, which indicates that the
+:attr:`.declared_attr.cascading` modifier, which indicates that the
 function should be invoked **for each class in the hierarchy**, just like
 it does for ``__tablename__``::
 
@@ -1217,7 +1217,7 @@ it does for ``__tablename__``::
         __mapper_args__ = {'polymorphic_identity': 'engineer'}
 
 
-.. versionadded:: 1.0.0 added :meth:`.declared_attr.cascading`.
+.. versionadded:: 1.0.0 added :attr:`.declared_attr.cascading`.
 
 Combining Table/Mapper Arguments from Multiple Mixins
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
