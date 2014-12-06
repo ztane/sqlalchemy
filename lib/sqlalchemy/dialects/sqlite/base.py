@@ -9,6 +9,7 @@
 .. dialect:: sqlite
     :name: SQLite
 
+.. _sqlite_datetime:
 
 Date and Time Types
 -------------------
@@ -22,6 +23,20 @@ and parsing functionality when SQlite is used. The implementation classes are
 These types represent dates and times as ISO formatted strings, which also
 nicely support ordering. There's no reliance on typical "libc" internals for
 these functions so historical dates are fully supported.
+
+Ensuring Text affinity
+^^^^^^^^^^^^^^^^^^^^^^
+
+The DDL rendered for these types is the standard ``DATE``, ``TIME``
+and ``DATETIME`` indicators.    However, custom storage formats can also be
+applied to these types.   When the
+storage format is detected as containing no alpha characters, the DDL for
+these types is rendered as ``DATE_CHAR``, ``TIME_CHAR``, and ``DATETIME_CHAR``,
+so that the column continues to have textual affinity.
+
+.. seealso::
+
+    `Type Affinity <http://www.sqlite.org/datatype3.html#affinity>`_ - in the SQLite documentation
 
 .. _sqlite_autoincrement:
 
@@ -255,7 +270,7 @@ from ... import util
 from ...engine import default, reflection
 from ...sql import compiler
 
-from ...types import (BLOB, BOOLEAN, CHAR, DATE, DECIMAL, FLOAT,
+from ...types import (BLOB, BOOLEAN, CHAR, DECIMAL, FLOAT,
                       INTEGER, REAL, NUMERIC, SMALLINT, TEXT,
                       TIMESTAMP, VARCHAR)
 
@@ -270,6 +285,25 @@ class _DateTimeMixin(object):
             self._reg = re.compile(regexp)
         if storage_format is not None:
             self._storage_format = storage_format
+
+    @property
+    def format_is_text_affinity(self):
+        """return True if the storage format will automatically imply
+        a TEXT affinity.
+
+        If the storage format contains no non-numeric characters,
+        it will imply a NUMERIC storage format on SQLite; in this case,
+        the type will generate its DDL as DATE_CHAR, DATETIME_CHAR,
+        TIME_CHAR.
+
+        .. versionadded:: 1.0.0
+
+        """
+        spec = self._storage_format % {
+            "year": 0, "month": 0, "day": 0, "hour": 0,
+            "minute": 0, "second": 0, "microsecond": 0
+        }
+        return bool(re.search(r'[^0-9]', spec))
 
     def adapt(self, cls, **kw):
         if issubclass(cls, _DateTimeMixin):
@@ -526,7 +560,9 @@ ischema_names = {
     'BOOLEAN': sqltypes.BOOLEAN,
     'CHAR': sqltypes.CHAR,
     'DATE': sqltypes.DATE,
+    'DATE_CHAR': sqltypes.DATE,
     'DATETIME': sqltypes.DATETIME,
+    'DATETIME_CHAR': sqltypes.DATETIME,
     'DOUBLE': sqltypes.FLOAT,
     'DECIMAL': sqltypes.DECIMAL,
     'FLOAT': sqltypes.FLOAT,
@@ -537,6 +573,7 @@ ischema_names = {
     'SMALLINT': sqltypes.SMALLINT,
     'TEXT': sqltypes.TEXT,
     'TIME': sqltypes.TIME,
+    'TIME_CHAR': sqltypes.TIME,
     'TIMESTAMP': sqltypes.TIMESTAMP,
     'VARCHAR': sqltypes.VARCHAR,
     'NVARCHAR': sqltypes.NVARCHAR,
@@ -591,19 +628,19 @@ class SQLiteCompiler(compiler.SQLCompiler):
             raise exc.CompileError(
                 "%s is not a valid extract argument." % extract.field)
 
-    def limit_clause(self, select):
+    def limit_clause(self, select, **kw):
         text = ""
         if select._limit_clause is not None:
-            text += "\n LIMIT " + self.process(select._limit_clause)
+            text += "\n LIMIT " + self.process(select._limit_clause, **kw)
         if select._offset_clause is not None:
             if select._limit_clause is None:
                 text += "\n LIMIT " + self.process(sql.literal(-1))
-            text += " OFFSET " + self.process(select._offset_clause)
+            text += " OFFSET " + self.process(select._offset_clause, **kw)
         else:
-            text += " OFFSET " + self.process(sql.literal(0))
+            text += " OFFSET " + self.process(sql.literal(0), **kw)
         return text
 
-    def for_update_clause(self, select):
+    def for_update_clause(self, select, **kw):
         # sqlite has no "FOR UPDATE" AFAICT
         return ''
 
@@ -646,8 +683,8 @@ class SQLiteDDLCompiler(compiler.DDLCompiler):
 
     def visit_foreign_key_constraint(self, constraint):
 
-        local_table = list(constraint._elements.values())[0].parent.table
-        remote_table = list(constraint._elements.values())[0].column.table
+        local_table = constraint.elements[0].parent.table
+        remote_table = constraint.elements[0].column.table
 
         if local_table.schema != remote_table.schema:
             return None
@@ -669,6 +706,27 @@ class SQLiteDDLCompiler(compiler.DDLCompiler):
 class SQLiteTypeCompiler(compiler.GenericTypeCompiler):
     def visit_large_binary(self, type_):
         return self.visit_BLOB(type_)
+
+    def visit_DATETIME(self, type_):
+        if not isinstance(type_, _DateTimeMixin) or \
+                type_.format_is_text_affinity:
+            return super(SQLiteTypeCompiler, self).visit_DATETIME(type_)
+        else:
+            return "DATETIME_CHAR"
+
+    def visit_DATE(self, type_):
+        if not isinstance(type_, _DateTimeMixin) or \
+                type_.format_is_text_affinity:
+            return super(SQLiteTypeCompiler, self).visit_DATE(type_)
+        else:
+            return "DATE_CHAR"
+
+    def visit_TIME(self, type_):
+        if not isinstance(type_, _DateTimeMixin) or \
+                type_.format_is_text_affinity:
+            return super(SQLiteTypeCompiler, self).visit_TIME(type_)
+        else:
+            return "TIME_CHAR"
 
 
 class SQLiteIdentifierPreparer(compiler.IdentifierPreparer):
@@ -713,10 +771,12 @@ class SQLiteExecutionContext(default.DefaultExecutionContext):
         return self.execution_options.get("sqlite_raw_colnames", False)
 
     def _translate_colname(self, colname):
-        # adjust for dotted column names. SQLite in the case of UNION may
-        # store col names as "tablename.colname" in cursor.description
+        # adjust for dotted column names.  SQLite
+        # in the case of UNION may store col names as
+        # "tablename.colname", or if using an attached database,
+        # "database.tablename.colname", in cursor.description
         if not self._preserve_raw_colnames and "." in colname:
-            return colname.split(".")[1], colname
+            return colname.split(".")[-1], colname
         else:
             return colname, None
 
@@ -829,20 +889,26 @@ class SQLiteDialect(default.DefaultDialect):
         if schema is not None:
             qschema = self.identifier_preparer.quote_identifier(schema)
             master = '%s.sqlite_master' % qschema
-            s = ("SELECT name FROM %s "
-                 "WHERE type='table' ORDER BY name") % (master,)
-            rs = connection.execute(s)
         else:
-            try:
-                s = ("SELECT name FROM "
-                     " (SELECT * FROM sqlite_master UNION ALL "
-                     "  SELECT * FROM sqlite_temp_master) "
-                     "WHERE type='table' ORDER BY name")
-                rs = connection.execute(s)
-            except exc.DBAPIError:
-                s = ("SELECT name FROM sqlite_master "
-                     "WHERE type='table' ORDER BY name")
-                rs = connection.execute(s)
+            master = "sqlite_master"
+        s = ("SELECT name FROM %s "
+             "WHERE type='table' ORDER BY name") % (master,)
+        rs = connection.execute(s)
+        return [row[0] for row in rs]
+
+    @reflection.cache
+    def get_temp_table_names(self, connection, **kw):
+        s = "SELECT name FROM sqlite_temp_master "\
+            "WHERE type='table' ORDER BY name "
+        rs = connection.execute(s)
+
+        return [row[0] for row in rs]
+
+    @reflection.cache
+    def get_temp_view_names(self, connection, **kw):
+        s = "SELECT name FROM sqlite_temp_master "\
+            "WHERE type='view' ORDER BY name "
+        rs = connection.execute(s)
 
         return [row[0] for row in rs]
 
@@ -869,20 +935,11 @@ class SQLiteDialect(default.DefaultDialect):
         if schema is not None:
             qschema = self.identifier_preparer.quote_identifier(schema)
             master = '%s.sqlite_master' % qschema
-            s = ("SELECT name FROM %s "
-                 "WHERE type='view' ORDER BY name") % (master,)
-            rs = connection.execute(s)
         else:
-            try:
-                s = ("SELECT name FROM "
-                     " (SELECT * FROM sqlite_master UNION ALL "
-                     "  SELECT * FROM sqlite_temp_master) "
-                     "WHERE type='view' ORDER BY name")
-                rs = connection.execute(s)
-            except exc.DBAPIError:
-                s = ("SELECT name FROM sqlite_master "
-                     "WHERE type='view' ORDER BY name")
-                rs = connection.execute(s)
+            master = "sqlite_master"
+        s = ("SELECT name FROM %s "
+             "WHERE type='view' ORDER BY name") % (master,)
+        rs = connection.execute(s)
 
         return [row[0] for row in rs]
 
@@ -1097,16 +1154,24 @@ class SQLiteDialect(default.DefaultDialect):
     @reflection.cache
     def get_unique_constraints(self, connection, table_name,
                                schema=None, **kw):
-        UNIQUE_SQL = """
-            SELECT sql
-            FROM
-                sqlite_master
-            WHERE
-                type='table' AND
-                name=:table_name
-        """
-        c = connection.execute(UNIQUE_SQL, table_name=table_name)
-        table_data = c.fetchone()[0]
+        try:
+            s = ("SELECT sql FROM "
+                 " (SELECT * FROM sqlite_master UNION ALL "
+                 "  SELECT * FROM sqlite_temp_master) "
+                 "WHERE name = '%s' "
+                 "AND type = 'table'") % table_name
+            rs = connection.execute(s)
+        except exc.DBAPIError:
+            s = ("SELECT sql FROM sqlite_master WHERE name = '%s' "
+                 "AND type = 'table'") % table_name
+            rs = connection.execute(s)
+        row = rs.fetchone()
+        if row is None:
+            # sqlite won't return the schema for the sqlite_master or
+            # sqlite_temp_master tables from this query. These tables
+            # don't have any unique constraints anyway.
+            return []
+        table_data = row[0]
 
         UNIQUE_PATTERN = 'CONSTRAINT (\w+) UNIQUE \(([^\)]+)\)'
         return [

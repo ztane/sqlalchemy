@@ -31,8 +31,6 @@ if py3k:
 else:
     import ConfigParser as configparser
 
-FOLLOWER_IDENT = None
-
 # late imports
 fixtures = None
 engines = None
@@ -72,8 +70,6 @@ def setup_options(make_option):
                 help="Drop all tables in the target database first")
     make_option("--backend-only", action="store_true", dest="backend_only",
                 help="Run only tests marked with __backend__")
-    make_option("--mockpool", action="store_true", dest="mockpool",
-                help="Use mock pool (asserts only one connection used)")
     make_option("--low-connections", action="store_true",
                 dest="low_connections",
                 help="Use a low number of distinct connections - "
@@ -95,17 +91,12 @@ def setup_options(make_option):
     make_option("--exclude-tag", action="callback", callback=_exclude_tag,
                 type="string",
                 help="Exclude tests with tag <tag>")
-    make_option("--serverside", action="store_true",
-                help="Turn on server side cursors for PG")
-    make_option("--mysql-engine", action="store",
-                dest="mysql_engine", default=None,
-                help="Use the specified MySQL storage engine for all tables, "
-                "default is a db-default/InnoDB combo.")
-    make_option("--tableopts", action="append", dest="tableopts", default=[],
-                help="Add a dialect-specific table option, key=value")
     make_option("--write-profiles", action="store_true",
                 dest="write_profiles", default=False,
-                help="Write/update profiling data.")
+                help="Write/update failing profiling data.")
+    make_option("--force-write-profiles", action="store_true",
+                dest="force_write_profiles", default=False,
+                help="Unconditionally write/update profiling data.")
 
 
 def configure_follower(follower_ident):
@@ -115,8 +106,8 @@ def configure_follower(follower_ident):
     database creation.
 
     """
-    global FOLLOWER_IDENT
-    FOLLOWER_IDENT = follower_ident
+    from sqlalchemy.testing import provision
+    provision.FOLLOWER_IDENT = follower_ident
 
 
 def memoize_important_follower_config(dict_):
@@ -177,10 +168,12 @@ def post_begin():
     global util, fixtures, engines, exclusions, \
         assertions, warnings, profiling,\
         config, testing
-    from sqlalchemy import testing
-    from sqlalchemy.testing import fixtures, engines, exclusions, \
-        assertions, warnings, profiling, config
-    from sqlalchemy import util
+    from sqlalchemy import testing # noqa
+    from sqlalchemy.testing import fixtures, engines, exclusions  # noqa
+    from sqlalchemy.testing import assertions, warnings, profiling # noqa
+    from sqlalchemy.testing import config  # noqa
+    from sqlalchemy import util  # noqa
+    warnings.setup_filters()
 
 
 def _log(opt_str, value, parser):
@@ -234,12 +227,6 @@ def _setup_options(opt, file_config):
 
 
 @pre
-def _server_side_cursors(options, file_config):
-    if options.serverside:
-        db_opts['server_side_cursors'] = True
-
-
-@pre
 def _monkeypatch_cdecimal(options, file_config):
     if options.cdecimal:
         import cdecimal
@@ -250,7 +237,7 @@ def _monkeypatch_cdecimal(options, file_config):
 def _engine_uri(options, file_config):
     from sqlalchemy.testing import config
     from sqlalchemy import testing
-    from sqlalchemy.testing.plugin import provision
+    from sqlalchemy.testing import provision
 
     if options.dburi:
         db_urls = list(options.dburi)
@@ -273,17 +260,10 @@ def _engine_uri(options, file_config):
 
     for db_url in db_urls:
         cfg = provision.setup_config(
-            db_url, db_opts, options, file_config, FOLLOWER_IDENT)
+            db_url, db_opts, options, file_config, provision.FOLLOWER_IDENT)
 
         if not config._current:
             cfg.set_as_current(cfg, testing)
-
-
-@post
-def _engine_pool(options, file_config):
-    if options.mockpool:
-        from sqlalchemy import pool
-        db_opts['poolclass'] = pool.AssertionPool
 
 
 @post
@@ -315,6 +295,7 @@ def _setup_requirements(argument):
 @post
 def _prep_testing_database(options, file_config):
     from sqlalchemy.testing import config
+    from sqlalchemy.testing.exclusions import against
     from sqlalchemy import schema, inspect
 
     if options.dropfirst:
@@ -358,18 +339,13 @@ def _prep_testing_database(options, file_config):
                                      schema="test_schema")
                     ))
 
-
-@post
-def _set_table_options(options, file_config):
-    from sqlalchemy.testing import schema
-
-    table_options = schema.table_options
-    for spec in options.tableopts:
-        key, value = spec.split('=')
-        table_options[key] = value
-
-    if options.mysql_engine:
-        table_options['mysql_engine'] = options.mysql_engine
+            if against(cfg, "postgresql"):
+                from sqlalchemy.dialects import postgresql
+                for enum in inspector.get_enums("*"):
+                    e.execute(postgresql.DropEnumType(
+                        postgresql.ENUM(
+                            name=enum['name'],
+                            schema=enum['schema'])))
 
 
 @post
@@ -482,13 +458,11 @@ def before_test(test, test_module_name, test_class, test_name):
 
     id_ = "%s.%s.%s" % (test_module_name, name, test_name)
 
-    warnings.resetwarnings()
     profiling._current_test = id_
 
 
 def after_test(test):
     engines.testing_reaper._after_test_ctx()
-    warnings.resetwarnings()
 
 
 def _possible_configs_for_cls(cls, reasons=None):

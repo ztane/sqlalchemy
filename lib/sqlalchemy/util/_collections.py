@@ -10,14 +10,28 @@
 from __future__ import absolute_import
 import weakref
 import operator
-from .compat import threading, itertools_filterfalse
+from .compat import threading, itertools_filterfalse, string_types
 from . import py2k
 import types
+import collections
 
 EMPTY_SET = frozenset()
 
 
-class KeyedTuple(tuple):
+class AbstractKeyedTuple(tuple):
+    def keys(self):
+        """Return a list of string key names for this :class:`.KeyedTuple`.
+
+        .. seealso::
+
+            :attr:`.KeyedTuple._fields`
+
+        """
+
+        return list(self._fields)
+
+
+class KeyedTuple(AbstractKeyedTuple):
     """``tuple`` subclass that adds labeled names.
 
     E.g.::
@@ -56,22 +70,12 @@ class KeyedTuple(tuple):
 
     def __new__(cls, vals, labels=None):
         t = tuple.__new__(cls, vals)
-        t._labels = []
         if labels:
             t.__dict__.update(zip(labels, vals))
-            t._labels = labels
+        else:
+            labels = []
+        t.__dict__['_labels'] = labels
         return t
-
-    def keys(self):
-        """Return a list of string key names for this :class:`.KeyedTuple`.
-
-        .. seealso::
-
-            :attr:`.KeyedTuple._fields`
-
-        """
-
-        return [l for l in self._labels if l is not None]
 
     @property
     def _fields(self):
@@ -86,7 +90,10 @@ class KeyedTuple(tuple):
             :meth:`.KeyedTuple.keys`
 
         """
-        return tuple(self.keys())
+        return tuple([l for l in self._labels if l is not None])
+
+    def __setattr__(self, key, value):
+        raise AttributeError("Can't set attribute: %s" % key)
 
     def _asdict(self):
         """Return the contents of this :class:`.KeyedTuple` as a dictionary.
@@ -98,6 +105,40 @@ class KeyedTuple(tuple):
 
         """
         return dict((key, self.__dict__[key]) for key in self.keys())
+
+
+class _LW(AbstractKeyedTuple):
+    __slots__ = ()
+
+    def __new__(cls, vals):
+        return tuple.__new__(cls, vals)
+
+    def __reduce__(self):
+        # for pickling, degrade down to the regular
+        # KeyedTuple, thus avoiding anonymous class pickling
+        # difficulties
+        return KeyedTuple, (list(self), self._real_fields)
+
+    def _asdict(self):
+        """Return the contents of this :class:`.KeyedTuple` as a dictionary."""
+
+        d = dict(zip(self._real_fields, self))
+        d.pop(None, None)
+        return d
+
+
+def lightweight_named_tuple(name, fields):
+
+    tp_cls = type(name, (_LW,), {})
+    for idx, field in enumerate(fields):
+        if field is None:
+            continue
+        setattr(tp_cls, field, property(operator.itemgetter(idx)))
+
+    tp_cls._real_fields = fields
+    tp_cls._fields = tuple([f for f in fields if f is not None])
+
+    return tp_cls
 
 
 class ImmutableContainer(object):
@@ -264,56 +305,24 @@ class OrderedDict(dict):
     def __iter__(self):
         return iter(self._list)
 
+    def keys(self):
+        return list(self)
+
+    def values(self):
+        return [self[key] for key in self._list]
+
+    def items(self):
+        return [(key, self[key]) for key in self._list]
+
     if py2k:
-        def values(self):
-            return [self[key] for key in self._list]
-
-        def keys(self):
-            return self._list
-
         def itervalues(self):
-            return iter([self[key] for key in self._list])
+            return iter(self.values())
 
         def iterkeys(self):
             return iter(self)
 
         def iteritems(self):
             return iter(self.items())
-
-        def items(self):
-            return [(key, self[key]) for key in self._list]
-    else:
-        def values(self):
-            # return (self[key] for key in self)
-            return (self[key] for key in self._list)
-
-        def keys(self):
-            # return iter(self)
-            return iter(self._list)
-
-        def items(self):
-            # return ((key, self[key]) for key in self)
-            return ((key, self[key]) for key in self._list)
-
-    _debug_iter = False
-    if _debug_iter:
-        # normally disabled to reduce function call
-        # overhead
-        def __iter__(self):
-            len_ = len(self._list)
-            for item in self._list:
-                yield item
-                assert len_ == len(self._list), \
-                    "Dictionary changed size during iteration"
-
-        def values(self):
-            return (self[key] for key in self)
-
-        def keys(self):
-            return iter(self)
-
-        def items(self):
-            return ((key, self[key]) for key in self)
 
     def __setitem__(self, key, object):
         if key not in self:
@@ -771,10 +780,12 @@ def coerce_generator_arg(arg):
 def to_list(x, default=None):
     if x is None:
         return default
-    if not isinstance(x, (list, tuple)):
+    if not isinstance(x, collections.Iterable) or isinstance(x, string_types):
         return [x]
-    else:
+    elif isinstance(x, list):
         return x
+    else:
+        return list(x)
 
 
 def to_set(x):

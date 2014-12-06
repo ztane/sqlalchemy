@@ -16,6 +16,7 @@ and `secondaryjoin` aspects of :func:`.relationship`.
 from __future__ import absolute_import
 from .. import sql, util, exc as sa_exc, schema, log
 
+import weakref
 from .util import CascadeOptions, _orm_annotate, _orm_deannotate
 from . import dependency
 from . import attributes
@@ -469,22 +470,18 @@ class RelationshipProperty(StrategizedProperty):
           nullable, or when the reference is one-to-one or a collection that
           is guaranteed to have one or at least one entry.
 
-          If the joined-eager load is chained onto an existing LEFT OUTER
-          JOIN, ``innerjoin=True`` will be bypassed and the join will continue
-          to chain as LEFT OUTER JOIN so that the results don't change.  As an
-          alternative, specify the value ``"nested"``.  This will instead nest
-          the join on the right side, e.g. using the form "a LEFT OUTER JOIN
-          (b JOIN c)".
-
-          .. versionadded:: 0.9.4 Added ``innerjoin="nested"`` option to
-             support nesting of eager "inner" joins.
+          The option supports the same "nested" and "unnested" options as
+          that of :paramref:`.joinedload.innerjoin`.  See that flag
+          for details on nested / unnested behaviors.
 
           .. seealso::
+
+            :paramref:`.joinedload.innerjoin` - the option as specified by
+            loader option, including detail on nesting behavior.
 
             :ref:`what_kind_of_loading` - Discussion of some details of
             various loader options.
 
-            :paramref:`.joinedload.innerjoin` - loader option version
 
         :param join_depth:
           when non-``None``, an integer value indicating how many levels
@@ -1322,25 +1319,10 @@ class RelationshipProperty(StrategizedProperty):
                 mapperlib.Mapper._configure_all()
             return self.prop
 
-    def compare(self, op, value,
-                value_is_parent=False,
-                alias_secondary=True):
-        if op == operators.eq:
-            if value is None:
-                if self.uselist:
-                    return ~sql.exists([1], self.primaryjoin)
-                else:
-                    return self._optimized_compare(
-                        None,
-                        value_is_parent=value_is_parent,
-                        alias_secondary=alias_secondary)
-            else:
-                return self._optimized_compare(
-                    value,
-                    value_is_parent=value_is_parent,
-                    alias_secondary=alias_secondary)
-        else:
-            return op(self.comparator, value)
+    def _with_parent(self, instance, alias_secondary=True):
+        assert instance is not None
+        return self._optimized_compare(
+            instance, value_is_parent=True, alias_secondary=alias_secondary)
 
     def _optimized_compare(self, value, value_is_parent=False,
                            adapt_source=None,
@@ -1562,6 +1544,7 @@ class RelationshipProperty(StrategizedProperty):
         self._check_cascade_settings(self._cascade)
         self._post_init()
         self._generate_backref()
+        self._join_condition._warn_for_conflicting_sync_targets()
         super(RelationshipProperty, self).do_init()
         self._lazy_strategy = self._get_strategy((("lazy", "select"),))
 
@@ -1648,7 +1631,7 @@ class RelationshipProperty(StrategizedProperty):
         """Test that this relationship is legal, warn about
         inheritance conflicts."""
 
-        if not self.is_primary() and not mapperlib.class_mapper(
+        if self.parent.non_primary and not mapperlib.class_mapper(
                 self.parent.class_,
                 configure=False).has_property(self.key):
             raise sa_exc.ArgumentError(
@@ -1734,7 +1717,7 @@ class RelationshipProperty(StrategizedProperty):
         """Interpret the 'backref' instruction to create a
         :func:`.relationship` complementary to this one."""
 
-        if not self.is_primary():
+        if self.parent.non_primary:
             return
         if self.backref is not None and not self.back_populates:
             if isinstance(self.backref, util.string_types):
@@ -2211,7 +2194,7 @@ class JoinCondition(object):
         elif self._local_remote_pairs or self._remote_side:
             self._annotate_remote_from_args()
         elif self._refers_to_parent_table():
-            self._annotate_selfref(lambda col: "foreign" in col._annotations)
+            self._annotate_selfref(lambda col: "foreign" in col._annotations, False)
         elif self._tables_overlap():
             self._annotate_remote_with_overlap()
         else:
@@ -2230,7 +2213,7 @@ class JoinCondition(object):
         self.secondaryjoin = visitors.replacement_traverse(
             self.secondaryjoin, {}, repl)
 
-    def _annotate_selfref(self, fn):
+    def _annotate_selfref(self, fn, remote_side_given):
         """annotate 'remote' in primaryjoin, secondaryjoin
         when the relationship is detected as self-referential.
 
@@ -2245,7 +2228,7 @@ class JoinCondition(object):
                 if fn(binary.right) and not equated:
                     binary.right = binary.right._annotate(
                         {"remote": True})
-            else:
+            elif not remote_side_given:
                 self._warn_non_column_elements()
 
         self.primaryjoin = visitors.cloned_traverse(
@@ -2270,7 +2253,7 @@ class JoinCondition(object):
             remote_side = self._remote_side
 
         if self._refers_to_parent_table():
-            self._annotate_selfref(lambda col: col in remote_side)
+            self._annotate_selfref(lambda col: col in remote_side, True)
         else:
             def repl(element):
                 if element in remote_side:
@@ -2548,6 +2531,60 @@ class JoinCondition(object):
         self.synchronize_pairs = self._deannotate_pairs(sync_pairs)
         self.secondary_synchronize_pairs = \
             self._deannotate_pairs(secondary_sync_pairs)
+
+    _track_overlapping_sync_targets = weakref.WeakKeyDictionary()
+
+    def _warn_for_conflicting_sync_targets(self):
+        if not self.support_sync:
+            return
+
+        # we would like to detect if we are synchronizing any column
+        # pairs in conflict with another relationship that wishes to sync
+        # an entirely different column to the same target.   This is a
+        # very rare edge case so we will try to minimize the memory/overhead
+        # impact of this check
+        for from_, to_ in [
+            (from_, to_) for (from_, to_) in self.synchronize_pairs
+        ] + [
+            (from_, to_) for (from_, to_) in self.secondary_synchronize_pairs
+        ]:
+            # save ourselves a ton of memory and overhead by only
+            # considering columns that are subject to a overlapping
+            # FK constraints at the core level.   This condition can arise
+            # if multiple relationships overlap foreign() directly, but
+            # we're going to assume it's typically a ForeignKeyConstraint-
+            # level configuration that benefits from this warning.
+            if len(to_.foreign_keys) < 2:
+                continue
+
+            if to_ not in self._track_overlapping_sync_targets:
+                self._track_overlapping_sync_targets[to_] = \
+                    weakref.WeakKeyDictionary({self.prop: from_})
+            else:
+                other_props = []
+                prop_to_from = self._track_overlapping_sync_targets[to_]
+                for pr, fr_ in prop_to_from.items():
+                    if pr.mapper in mapperlib._mapper_registry and \
+                        fr_ is not from_ and \
+                            pr not in self.prop._reverse_property:
+                        other_props.append((pr, fr_))
+
+                if other_props:
+                    util.warn(
+                        "relationship '%s' will copy column %s to column %s, "
+                        "which conflicts with relationship(s): %s. "
+                        "Consider applying "
+                        "viewonly=True to read-only relationships, or provide "
+                        "a primaryjoin condition marking writable columns "
+                        "with the foreign() annotation." % (
+                            self.prop,
+                            from_, to_,
+                            ", ".join(
+                                "'%s' (copies %s to %s)" % (pr, fr_, to_)
+                                for (pr, fr_) in other_props)
+                        )
+                    )
+                self._track_overlapping_sync_targets[to_][self.prop] = from_
 
     @util.memoized_property
     def remote_columns(self):

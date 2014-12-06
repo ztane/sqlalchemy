@@ -238,8 +238,24 @@ class SelectTest(fixtures.TestBase, AssertsCompiledSQL):
                 checkparams=params
             )
 
+    def test_limit_offset_select_literal_binds(self):
+        stmt = select([1]).limit(5).offset(6)
+        self.assert_compile(
+            stmt,
+            "SELECT 1 LIMIT 5 OFFSET 6",
+            literal_binds=True
+        )
+
+    def test_limit_offset_compound_select_literal_binds(self):
+        stmt = select([1]).union(select([2])).limit(5).offset(6)
+        self.assert_compile(
+            stmt,
+            "SELECT 1 UNION SELECT 2 LIMIT 5 OFFSET 6",
+            literal_binds=True
+        )
+
     def test_select_precol_compile_ordering(self):
-        s1 = select([column('x')]).select_from('a').limit(5).as_scalar()
+        s1 = select([column('x')]).select_from(text('a')).limit(5).as_scalar()
         s2 = select([s1]).limit(10)
 
         class MyCompiler(compiler.SQLCompiler):
@@ -256,7 +272,7 @@ class SelectTest(fixtures.TestBase, AssertsCompiledSQL):
                             select._offset))
                 return result
 
-            def limit_clause(self, select):
+            def limit_clause(self, select, **kw):
                 return ""
 
         dialect = default.DefaultDialect()
@@ -346,7 +362,7 @@ class SelectTest(fixtures.TestBase, AssertsCompiledSQL):
     def test_select_from_clauselist(self):
         self.assert_compile(
             select([ClauseList(column('a'), column('b'))]
-                   ).select_from('sometable'),
+                   ).select_from(text('sometable')),
             'SELECT a, b FROM sometable'
         )
 
@@ -419,6 +435,19 @@ class SelectTest(fixtures.TestBase, AssertsCompiledSQL):
             dialect=default.DefaultDialect(paramstyle='pyformat')
         )
 
+    def test_anon_param_name_on_keys(self):
+        self.assert_compile(
+            keyed.insert(),
+            "INSERT INTO keyed (x, y, z) VALUES (%(colx)s, %(coly)s, %(z)s)",
+            dialect=default.DefaultDialect(paramstyle='pyformat')
+        )
+        self.assert_compile(
+            keyed.c.coly == 5,
+            "keyed.y = %(coly_1)s",
+            checkparams={'coly_1': 5},
+            dialect=default.DefaultDialect(paramstyle='pyformat')
+        )
+
     def test_dupe_columns(self):
         """test that deduping is performed against clause
         element identity, not rendered result."""
@@ -462,7 +491,7 @@ class SelectTest(fixtures.TestBase, AssertsCompiledSQL):
         )
 
         self.assert_compile(
-            select(["a", "a", "a"]),
+            select([column("a"), column("a"), column("a")]),
             "SELECT a, a, a"
         )
 
@@ -933,7 +962,7 @@ class SelectTest(fixtures.TestBase, AssertsCompiledSQL):
         )
 
     def test_conjunctions(self):
-        a, b, c = 'a', 'b', 'c'
+        a, b, c = text('a'), text('b'), text('c')
         x = and_(a, b, c)
         assert isinstance(x.type, Boolean)
         assert str(x) == 'a AND b AND c'
@@ -944,7 +973,7 @@ class SelectTest(fixtures.TestBase, AssertsCompiledSQL):
 
         self.assert_compile(
             and_(table1.c.myid == 12, table1.c.name == 'asdf',
-                 table2.c.othername == 'foo', "sysdate() = today()"),
+                 table2.c.othername == 'foo', text("sysdate() = today()")),
             "mytable.myid = :myid_1 AND mytable.name = :name_1 "
             "AND myothertable.othername = "
             ":othername_1 AND sysdate() = today()"
@@ -955,7 +984,7 @@ class SelectTest(fixtures.TestBase, AssertsCompiledSQL):
                 table1.c.myid == 12,
                 or_(table2.c.othername == 'asdf',
                     table2.c.othername == 'foo', table2.c.otherid == 9),
-                "sysdate() = today()",
+                text("sysdate() = today()"),
             ),
             'mytable.myid = :myid_1 AND (myothertable.othername = '
             ':othername_1 OR myothertable.othername = :othername_2 OR '
@@ -1067,8 +1096,12 @@ class SelectTest(fixtures.TestBase, AssertsCompiledSQL):
 
     def test_multiple_col_binds(self):
         self.assert_compile(
-            select(["*"], or_(table1.c.myid == 12, table1.c.myid == 'asdf',
-                              table1.c.myid == 'foo')),
+            select(
+                [literal_column("*")],
+                or_(
+                    table1.c.myid == 12, table1.c.myid == 'asdf',
+                    table1.c.myid == 'foo')
+            ),
             "SELECT * FROM mytable WHERE mytable.myid = :myid_1 "
             "OR mytable.myid = :myid_2 OR mytable.myid = :myid_3"
         )
@@ -1478,7 +1511,7 @@ class SelectTest(fixtures.TestBase, AssertsCompiledSQL):
                 table1.c.name == 'fred',
                 table1.c.myid == 10,
                 table2.c.othername != 'jack',
-                "EXISTS (select yay from foo where boo = lar)"
+                text("EXISTS (select yay from foo where boo = lar)")
             ),
             from_obj=[outerjoin(table1, table2,
                                 table1.c.myid == table2.c.otherid)]
@@ -1551,7 +1584,8 @@ class SelectTest(fixtures.TestBase, AssertsCompiledSQL):
             "SELECT mytable.myid, mytable.name "
             "FROM mytable UNION SELECT myothertable.otherid, "
             "myothertable.othername "
-            "FROM myothertable ORDER BY myid LIMIT :param_1 OFFSET :param_2",
+            "FROM myothertable ORDER BY myid "  # note table name is omitted
+            "LIMIT :param_1 OFFSET :param_2",
             {'param_1': 5, 'param_2': 10}
         )
 
@@ -1614,7 +1648,7 @@ class SelectTest(fixtures.TestBase, AssertsCompiledSQL):
         )
 
     def test_compound_grouping(self):
-        s = select([column('foo'), column('bar')]).select_from('bat')
+        s = select([column('foo'), column('bar')]).select_from(text('bat'))
 
         self.assert_compile(
             union(union(union(s, s), s), s),
@@ -2130,10 +2164,10 @@ class SelectTest(fixtures.TestBase, AssertsCompiledSQL):
         self.assert_compile(
             select([
                 func.max(table1.c.name).over(
-                    partition_by=['foo']
+                    partition_by=['description']
                 )
             ]),
-            "SELECT max(mytable.name) OVER (PARTITION BY foo) "
+            "SELECT max(mytable.name) OVER (PARTITION BY mytable.description) "
             "AS anon_1 FROM mytable"
         )
         # from partition_by
@@ -2162,6 +2196,27 @@ class SelectTest(fixtures.TestBase, AssertsCompiledSQL):
         self.assert_compile(
             select([column("x") + over(func.foo())]),
             "SELECT x + foo() OVER () AS anon_1"
+        )
+
+        # test a reference to a label that in the referecned selectable;
+        # this resolves
+        expr = (table1.c.myid + 5).label('sum')
+        stmt = select([expr]).alias()
+        self.assert_compile(
+            select([stmt.c.sum, func.row_number().over(order_by=stmt.c.sum)]),
+            "SELECT anon_1.sum, row_number() OVER (ORDER BY anon_1.sum) "
+            "AS anon_2 FROM (SELECT mytable.myid + :myid_1 AS sum "
+            "FROM mytable) AS anon_1"
+        )
+
+        # test a reference to a label that's at the same level as the OVER
+        # in the columns clause; doesn't resolve
+        expr = (table1.c.myid + 5).label('sum')
+        self.assert_compile(
+            select([expr, func.row_number().over(order_by=expr)]),
+            "SELECT mytable.myid + :myid_1 AS sum, "
+            "row_number() OVER "
+            "(ORDER BY mytable.myid + :myid_1) AS anon_1 FROM mytable"
         )
 
     def test_date_between(self):
@@ -2385,7 +2440,7 @@ class SelectTest(fixtures.TestBase, AssertsCompiledSQL):
                 """SELECT /*+ "QuotedName" idx1 */ "QuotedName".col1 """
                 """FROM "QuotedName" WHERE "QuotedName".col1 > :col1_1"""),
             (s7, oracle_d,
-             """SELECT /*+ SomeName idx1 */ "SomeName".col1 FROM """
+             """SELECT /*+ "SomeName" idx1 */ "SomeName".col1 FROM """
              """"QuotedName" "SomeName" WHERE "SomeName".col1 > :col1_1"""),
         ]:
             self.assert_compile(
@@ -2394,9 +2449,26 @@ class SelectTest(fixtures.TestBase, AssertsCompiledSQL):
                 dialect=dialect
             )
 
+    def test_statement_hints(self):
+
+        stmt = select([table1.c.myid]).\
+            with_statement_hint("test hint one").\
+            with_statement_hint("test hint two", 'mysql')
+
+        self.assert_compile(
+            stmt,
+            "SELECT mytable.myid FROM mytable test hint one",
+        )
+
+        self.assert_compile(
+            stmt,
+            "SELECT mytable.myid FROM mytable test hint one test hint two",
+            dialect='mysql'
+        )
+
     def test_literal_as_text_fromstring(self):
         self.assert_compile(
-            and_("a", "b"),
+            and_(text("a"), text("b")),
             "a AND b"
         )
 
@@ -3364,4 +3436,33 @@ class ResultMapTest(fixtures.TestBase):
         )
         is_(
             comp.result_map['t1_a'][1][2], t1.c.a
+        )
+
+    def test_insert_with_select_values(self):
+        astring = Column('a', String)
+        aint = Column('a', Integer)
+        m = MetaData()
+        Table('t1', m, astring)
+        t2 = Table('t2', m, aint)
+
+        stmt = t2.insert().values(a=select([astring])).returning(aint)
+        comp = stmt.compile(dialect=postgresql.dialect())
+        eq_(
+            comp.result_map,
+            {'a': ('a', (aint, 'a', 'a'), aint.type)}
+        )
+
+    def test_insert_from_select(self):
+        astring = Column('a', String)
+        aint = Column('a', Integer)
+        m = MetaData()
+        Table('t1', m, astring)
+        t2 = Table('t2', m, aint)
+
+        stmt = t2.insert().from_select(['a'], select([astring])).\
+            returning(aint)
+        comp = stmt.compile(dialect=postgresql.dialect())
+        eq_(
+            comp.result_map,
+            {'a': ('a', (aint, 'a', 'a'), aint.type)}
         )

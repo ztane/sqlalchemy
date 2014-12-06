@@ -75,6 +75,7 @@ class Query(object):
     _having = None
     _distinct = False
     _prefixes = None
+    _suffixes = None
     _offset = None
     _limit = None
     _for_update_arg = None
@@ -137,10 +138,7 @@ class Query(object):
                             )
                         aliased_adapter = None
                     elif ext_info.is_aliased_class:
-                        aliased_adapter = sql_util.ColumnAdapter(
-                            ext_info.selectable,
-                            ext_info.mapper._equivalent_columns
-                        )
+                        aliased_adapter = ext_info._adapter
                     else:
                         aliased_adapter = None
 
@@ -218,7 +216,7 @@ class Query(object):
     def _adapt_col_list(self, cols):
         return [
             self._adapt_clause(
-                expression._literal_as_text(o),
+                expression._literal_as_label_reference(o),
                 True, True)
             for o in cols
         ]
@@ -595,10 +593,18 @@ class Query(object):
 
         This is used primarily when nesting the Query's
         statement into a subquery or other
-        selectable.
+        selectable, or when using :meth:`.Query.yield_per`.
 
         """
         self._enable_eagerloads = value
+
+    def _no_yield_per(self, message):
+        raise sa_exc.InvalidRequestError(
+            "The yield_per Query option is currently not "
+            "compatible with %s eager loading.  Please "
+            "specify lazyload('*') or query.enable_eagerloads(False) in "
+            "order to "
+            "proceed with query.yield_per()." % message)
 
     @_generative()
     def with_labels(self):
@@ -705,24 +711,58 @@ class Query(object):
     def yield_per(self, count):
         """Yield only ``count`` rows at a time.
 
-        WARNING: use this method with caution; if the same instance is present
-        in more than one batch of rows, end-user changes to attributes will be
-        overwritten.
+        The purpose of this method is when fetching very large result sets
+        (> 10K rows), to batch results in sub-collections and yield them
+        out partially, so that the Python interpreter doesn't need to declare
+        very large areas of memory which is both time consuming and leads
+        to excessive memory use.   The performance from fetching hundreds of
+        thousands of rows can often double when a suitable yield-per setting
+        (e.g. approximately 1000) is used, even with DBAPIs that buffer
+        rows (which are most).
 
-        In particular, it's usually impossible to use this setting with
-        eagerly loaded collections (i.e. any lazy='joined' or 'subquery')
-        since those collections will be cleared for a new load when
-        encountered in a subsequent result batch.   In the case of 'subquery'
-        loading, the full result for all rows is fetched which generally
-        defeats the purpose of :meth:`~sqlalchemy.orm.query.Query.yield_per`.
+        The :meth:`.Query.yield_per` method **is not compatible with most
+        eager loading schemes, including subqueryload and joinedload with
+        collections**.  For this reason, it may be helpful to disable
+        eager loads, either unconditionally with
+        :meth:`.Query.enable_eagerloads`::
 
-        Also note that while :meth:`~sqlalchemy.orm.query.Query.yield_per`
-        will set the ``stream_results`` execution option to True, currently
-        this is only understood by
-        :mod:`~sqlalchemy.dialects.postgresql.psycopg2` dialect which will
-        stream results using server side cursors instead of pre-buffer all
-        rows for this query. Other DBAPIs pre-buffer all rows before making
-        them available.
+            q = sess.query(Object).yield_per(100).enable_eagerloads(False)
+
+        Or more selectively using :func:`.lazyload`; such as with
+        an asterisk to specify the default loader scheme::
+
+            q = sess.query(Object).yield_per(100).\\
+                options(lazyload('*'), joinedload(Object.some_related))
+
+        .. warning::
+
+            Use this method with caution; if the same instance is
+            present in more than one batch of rows, end-user changes
+            to attributes will be overwritten.
+
+            In particular, it's usually impossible to use this setting
+            with eagerly loaded collections (i.e. any lazy='joined' or
+            'subquery') since those collections will be cleared for a
+            new load when encountered in a subsequent result batch.
+            In the case of 'subquery' loading, the full result for all
+            rows is fetched which generally defeats the purpose of
+            :meth:`~sqlalchemy.orm.query.Query.yield_per`.
+
+            Also note that while
+            :meth:`~sqlalchemy.orm.query.Query.yield_per` will set the
+            ``stream_results`` execution option to True, currently
+            this is only understood by
+            :mod:`~sqlalchemy.dialects.postgresql.psycopg2` dialect
+            which will stream results using server side cursors
+            instead of pre-buffer all rows for this query. Other
+            DBAPIs **pre-buffer all rows** before making them
+            available.  The memory use of raw database rows is much less
+            than that of an ORM-mapped object, but should still be taken into
+            consideration when benchmarking.
+
+        .. seealso::
+
+            :meth:`.Query.enable_eagerloads`
 
         """
         self._yield_per = count
@@ -945,9 +985,9 @@ class Query(object):
 
         """
         fromclause = self.with_labels().enable_eagerloads(False).\
-            _set_enable_single_crit(False).\
             statement.correlate(None)
         q = self._from_selectable(fromclause)
+        q._enable_single_crit = False
         if entities:
             q._set_entities(entities)
         return q
@@ -964,7 +1004,7 @@ class Query(object):
                 '_limit', '_offset',
                 '_joinpath', '_joinpoint',
                 '_distinct', '_having',
-                '_prefixes',
+                '_prefixes', '_suffixes'
         ):
             self.__dict__.pop(attr, None)
         self._set_select_from([fromclause], True)
@@ -1106,7 +1146,8 @@ class Query(object):
 
     @_generative()
     def with_hint(self, selectable, text, dialect_name='*'):
-        """Add an indexing hint for the given entity or selectable to
+        """Add an indexing or other executional context
+        hint for the given entity or selectable to
         this :class:`.Query`.
 
         Functionality is passed straight through to
@@ -1114,10 +1155,34 @@ class Query(object):
         with the addition that ``selectable`` can be a
         :class:`.Table`, :class:`.Alias`, or ORM entity / mapped class
         /etc.
+
+        .. seealso::
+
+            :meth:`.Query.with_statement_hint`
+
         """
-        selectable = inspect(selectable).selectable
+        if selectable is not None:
+            selectable = inspect(selectable).selectable
 
         self._with_hints += ((selectable, text, dialect_name),)
+
+    def with_statement_hint(self, text, dialect_name='*'):
+        """add a statement hint to this :class:`.Select`.
+
+        This method is similar to :meth:`.Select.with_hint` except that
+        it does not require an individual table, and instead applies to the
+        statement as a whole.
+
+        This feature calls down into :meth:`.Select.with_statement_hint`.
+
+        .. versionadded:: 1.0.0
+
+        .. seealso::
+
+            :meth:`.Query.with_hint`
+
+        """
+        return self.with_hint(None, text, dialect_name)
 
     @_generative()
     def execution_options(self, **kwargs):
@@ -1240,7 +1305,7 @@ class Query(object):
 
         """
         for criterion in list(criterion):
-            criterion = expression._literal_as_text(criterion)
+            criterion = expression._expression_literal_as_text(criterion)
 
             criterion = self._adapt_clause(criterion, True, True)
 
@@ -1339,8 +1404,7 @@ class Query(object):
 
         """
 
-        if isinstance(criterion, util.string_types):
-            criterion = sql.text(criterion)
+        criterion = expression._expression_literal_as_text(criterion)
 
         if criterion is not None and \
                 not isinstance(criterion, sql.ClauseElement):
@@ -1677,6 +1741,14 @@ class Query(object):
          anonymously aliased.  Subsequent calls to :meth:`~.Query.filter`
          and similar will adapt the incoming criterion to the target
          alias, until :meth:`~.Query.reset_joinpoint` is called.
+        :param isouter=False: If True, the join used will be a left outer join,
+         just as if the :meth:`.Query.outerjoin` method were called.  This
+         flag is here to maintain consistency with the same flag as accepted
+         by :meth:`.FromClause.join` and other Core constructs.
+
+
+         .. versionadded:: 1.0.0
+
         :param from_joinpoint=False: When using ``aliased=True``, a setting
          of True here will cause the join to be from the most recent
          joined target, rather than starting back from the original
@@ -1694,13 +1766,15 @@ class Query(object):
             SQLAlchemy versions was the primary ORM-level joining interface.
 
         """
-        aliased, from_joinpoint = kwargs.pop('aliased', False),\
-            kwargs.pop('from_joinpoint', False)
+        aliased, from_joinpoint, isouter = kwargs.pop('aliased', False),\
+            kwargs.pop('from_joinpoint', False),\
+            kwargs.pop('isouter', False)
         if kwargs:
             raise TypeError("unknown arguments: %s" %
                             ','.join(kwargs.keys))
+        isouter = isouter
         return self._join(props,
-                          outerjoin=False, create_aliases=aliased,
+                          outerjoin=isouter, create_aliases=aliased,
                           from_joinpoint=from_joinpoint)
 
     def outerjoin(self, *props, **kwargs):
@@ -1772,6 +1846,11 @@ class Query(object):
 
             left_entity = prop = None
 
+            if isinstance(onclause, interfaces.PropComparator):
+                of_type = getattr(onclause, '_of_type', None)
+            else:
+                of_type = None
+
             if isinstance(onclause, util.string_types):
                 left_entity = self._joinpoint_zero()
 
@@ -1798,8 +1877,6 @@ class Query(object):
 
             if isinstance(onclause, interfaces.PropComparator):
                 if right_entity is None:
-                    right_entity = onclause.property.mapper
-                    of_type = getattr(onclause, '_of_type', None)
                     if of_type:
                         right_entity = of_type
                     else:
@@ -1881,11 +1958,9 @@ class Query(object):
                                 from_obj, r_info.selectable):
                         overlap = True
                         break
-            elif sql_util.selectables_overlap(l_info.selectable,
-                                              r_info.selectable):
-                overlap = True
 
-        if overlap and l_info.selectable is r_info.selectable:
+        if (overlap or not create_aliases) and \
+                l_info.selectable is r_info.selectable:
             raise sa_exc.InvalidRequestError(
                 "Can't join table/selectable '%s' to itself" %
                 l_info.selectable)
@@ -2285,11 +2360,37 @@ class Query(object):
 
         .. versionadded:: 0.7.7
 
+        .. seealso::
+
+            :meth:`.HasPrefixes.prefix_with`
+
         """
         if self._prefixes:
             self._prefixes += prefixes
         else:
             self._prefixes = prefixes
+
+    @_generative()
+    def suffix_with(self, *suffixes):
+        """Apply the suffix to the query and return the newly resulting
+        ``Query``.
+
+        :param \*suffixes: optional suffixes, typically strings,
+         not using any commas.
+
+        .. versionadded:: 1.0.0
+
+        .. seealso::
+
+            :meth:`.Query.prefix_with`
+
+            :meth:`.HasSuffixes.suffix_with`
+
+        """
+        if self._suffixes:
+            self._suffixes += suffixes
+        else:
+            self._suffixes = suffixes
 
     def all(self):
         """Return the results represented by this ``Query`` as a list.
@@ -2306,13 +2407,18 @@ class Query(object):
         This method bypasses all internal statement compilation, and the
         statement is executed without modification.
 
-        The statement argument is either a string, a ``select()`` construct,
-        or a ``text()`` construct, and should return the set of columns
-        appropriate to the entity class represented by this ``Query``.
+        The statement is typically either a :func:`~.expression.text`
+        or :func:`~.expression.select` construct, and should return the set
+        of columns
+        appropriate to the entity class represented by this :class:`.Query`.
+
+        .. seealso::
+
+            :ref:`orm_tutorial_literal_sql` - usage examples in the
+            ORM tutorial
 
         """
-        if isinstance(statement, util.string_types):
-            statement = sql.text(statement)
+        statement = expression._expression_literal_as_text(statement)
 
         if not isinstance(statement,
                           (expression.TextClause,
@@ -2522,6 +2628,7 @@ class Query(object):
             'offset': self._offset,
             'distinct': self._distinct,
             'prefixes': self._prefixes,
+            'suffixes': self._suffixes,
             'group_by': self._group_by or None,
             'having': self._having
         }
@@ -2548,6 +2655,19 @@ class Query(object):
                 SELECT 1 FROM users WHERE users.name = :name_1
             ) AS anon_1
 
+        The EXISTS construct is usually used in the WHERE clause::
+
+            session.query(User.id).filter(q.exists()).scalar()
+
+        Note that some databases such as SQL Server don't allow an
+        EXISTS expression to be present in the columns clause of a
+        SELECT.    To select a simple boolean value based on the exists
+        as a WHERE, use :func:`.literal`::
+
+            from sqlalchemy import literal
+
+            session.query(literal(True)).filter(q.exists()).scalar()
+
         .. versionadded:: 0.8.1
 
         """
@@ -2558,7 +2678,7 @@ class Query(object):
         # .with_only_columns() after we have a core select() so that
         # we get just "SELECT 1" without any entities.
         return sql.exists(self.add_columns('1').with_labels().
-                          statement.with_only_columns(['1']))
+                          statement.with_only_columns([1]))
 
     def count(self):
         """Return a count of rows this Query would return.
@@ -2675,8 +2795,24 @@ class Query(object):
 
         Updates rows matched by this query in the database.
 
-        :param values: a dictionary with attributes names as keys and literal
+        E.g.::
+
+            sess.query(User).filter(User.age == 25).\
+                update({User.age: User.age - 10}, synchronize_session='fetch')
+
+
+            sess.query(User).filter(User.age == 25).\
+                update({"age": User.age - 10}, synchronize_session='evaluate')
+
+
+        :param values: a dictionary with attributes names, or alternatively
+          mapped attributes or SQL expressions, as keys, and literal
           values or sql expressions as values.
+
+          .. versionchanged:: 1.0.0 - string names in the values dictionary
+             are now resolved against the mapped entity; previously, these
+             strings were passed as literal column names with no mapper-level
+             translation.
 
         :param synchronize_session: chooses the strategy to update the
             attributes on objects in the session. Valid values are:
@@ -2715,7 +2851,7 @@ class Query(object):
           which normally occurs upon :meth:`.Session.commit` or can be forced
           by using :meth:`.Session.expire_all`.
 
-        * As of 0.8, this method will support multiple table updates, as
+        * The method supports multiple table updates, as
           detailed in :ref:`multi_table_updates`, and this behavior does
           extend to support updates of joined-inheritance and other multiple
           table mappings.  However, the **join condition of an inheritance
@@ -2745,12 +2881,6 @@ class Query(object):
             :ref:`inserts_and_updates` - Core SQL tutorial
 
         """
-
-        # TODO: value keys need to be mapped to corresponding sql cols and
-        # instr.attr.s to string keys
-        # TODO: updates of manytoone relationships need to be converted to
-        # fk assignments
-        # TODO: cascades need handling.
 
         update_op = persistence.BulkUpdate.factory(
             self, synchronize_session, values)
@@ -3003,7 +3133,6 @@ class _MapperEntity(_QueryEntity):
         else:
             self._label_name = self.mapper.class_.__name__
         self.path = self.entity_zero._path_registry
-        self.custom_rows = bool(self.mapper.dispatch.append_result)
 
     def set_with_polymorphic(self, query, cls_or_mappers,
                              selectable, polymorphic_on):
@@ -3082,7 +3211,7 @@ class _MapperEntity(_QueryEntity):
 
         return ret
 
-    def row_processor(self, query, context, custom_rows):
+    def row_processor(self, query, context, result):
         adapter = self._get_entity_clauses(query, context)
 
         if context.adapter and adapter:
@@ -3102,6 +3231,7 @@ class _MapperEntity(_QueryEntity):
             _instance = loading.instance_processor(
                 self.mapper,
                 context,
+                result,
                 self.path,
                 adapter,
                 only_load_props=query._only_load_props,
@@ -3112,6 +3242,7 @@ class _MapperEntity(_QueryEntity):
             _instance = loading.instance_processor(
                 self.mapper,
                 context,
+                result,
                 self.path,
                 adapter,
                 polymorphic_discriminator=self._polymorphic_discriminator
@@ -3275,9 +3406,10 @@ class Bundle(object):
             :ref:`bundles` - includes an example of subclassing.
 
         """
-        def proc(row, result):
-            return util.KeyedTuple(
-                [proc(row, None) for proc in procs], labels)
+        keyed_tuple = util.lightweight_named_tuple('result', labels)
+
+        def proc(row):
+            return keyed_tuple([proc(row) for proc in procs])
         return proc
 
 
@@ -3301,8 +3433,6 @@ class _BundleEntity(_QueryEntity):
         self.filter_fn = lambda item: item
 
         self.supports_single_entity = self.bundle.single_entity
-
-    custom_rows = False
 
     @property
     def entity_zero(self):
@@ -3344,9 +3474,9 @@ class _BundleEntity(_QueryEntity):
         for ent in self._entities:
             ent.setup_context(query, context)
 
-    def row_processor(self, query, context, custom_rows):
+    def row_processor(self, query, context, result):
         procs, labels = zip(
-            *[ent.row_processor(query, context, custom_rows)
+            *[ent.row_processor(query, context, result)
               for ent in self._entities]
         )
 
@@ -3436,7 +3566,6 @@ class _ColumnEntity(_QueryEntity):
             self.entity_zero = None
 
     supports_single_entity = False
-    custom_rows = False
 
     @property
     def entity_zero_or_selectable(self):
@@ -3473,17 +3602,15 @@ class _ColumnEntity(_QueryEntity):
     def _resolve_expr_against_query_aliases(self, query, expr, context):
         return query._adapt_clause(expr, False, True)
 
-    def row_processor(self, query, context, custom_rows):
+    def row_processor(self, query, context, result):
         column = self._resolve_expr_against_query_aliases(
             query, self.column, context)
 
         if context.adapter:
             column = context.adapter.columns[column]
 
-        def proc(row, result):
-            return row[column]
-
-        return proc, self._label_name
+        getter = result._getter(column)
+        return getter, self._label_name
 
     def setup_context(self, query, context):
         column = self._resolve_expr_against_query_aliases(

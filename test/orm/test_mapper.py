@@ -222,7 +222,8 @@ class MapperTest(_fixtures.FixtureTest, AssertsCompiledSQL):
         mapper(Address, addresses)
         s = create_session()
         a = s.query(Address).from_statement(
-            sa.select([addresses.c.id, addresses.c.user_id])).first()
+            sa.select([addresses.c.id, addresses.c.user_id]).
+            order_by(addresses.c.id)).first()
         eq_(a.user_id, 7)
         eq_(a.id, 1)
         # email address auto-defers
@@ -414,7 +415,9 @@ class MapperTest(_fixtures.FixtureTest, AssertsCompiledSQL):
         for constructor, args in [
             (column_property, (users.c.name,)),
             (relationship, (Address,)),
-            (composite, (MyComposite, 'id', 'name'))
+            (composite, (MyComposite, 'id', 'name')),
+            (synonym, 'foo'),
+            (comparable_property, 'foo')
         ]:
             obj = constructor(info={"x": "y"}, *args)
             eq_(obj.info, {"x": "y"})

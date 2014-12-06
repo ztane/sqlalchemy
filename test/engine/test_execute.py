@@ -21,9 +21,12 @@ from sqlalchemy.testing import fixtures
 from sqlalchemy.testing.mock import Mock, call, patch
 from contextlib import contextmanager
 from sqlalchemy.util import nested
-import logging.handlers  # needed for logging tests to work correctly
 
 users, metadata, users_autoinc = None, None, None
+
+
+class SomeException(Exception):
+    pass
 
 
 class ExecuteTest(fixtures.TestBase):
@@ -281,12 +284,13 @@ class ExecuteTest(fixtures.TestBase):
             impl = Integer
 
             def process_bind_param(self, value, dialect):
-                raise Exception("nope")
+                raise SomeException("nope")
 
         def _go(conn):
             assert_raises_message(
                 tsa.exc.StatementError,
-                r"nope \(original cause: Exception: nope\) u?'SELECT 1 ",
+                r"\(test.engine.test_execute.SomeException\) "
+                "nope \[SQL\: u?'SELECT 1 ",
                 conn.execute,
                 select([1]).
                 where(
@@ -480,6 +484,26 @@ class ExecuteTest(fixtures.TestBase):
         eq_(canary, ["l1", "l2", "l3", "l1", "l2"])
 
     @testing.requires.ad_hoc_engines
+    def test_autocommit_option_no_issue_first_connect(self):
+        eng = create_engine(testing.db.url)
+        eng.update_execution_options(autocommit=True)
+        conn = eng.connect()
+        eq_(conn._execution_options, {"autocommit": True})
+        conn.close()
+
+    @testing.requires.ad_hoc_engines
+    def test_dialect_init_uses_options(self):
+        eng = create_engine(testing.db.url)
+
+        def my_init(connection):
+            connection.execution_options(foo='bar').execute(select([1]))
+
+        with patch.object(eng.dialect, "initialize", my_init):
+            conn = eng.connect()
+            eq_(conn._execution_options, {})
+            conn.close()
+
+    @testing.requires.ad_hoc_engines
     def test_generative_engine_event_dispatch_hasevents(self):
         def l1(*arg, **kw):
             pass
@@ -542,7 +566,7 @@ class ConvenienceExecuteTest(fixtures.TablesTest):
             if is_transaction:
                 conn = conn.connection
             conn.execute(self.table.insert().values(a=x, b=value))
-            raise Exception("breakage")
+            raise SomeException("breakage")
         return go
 
     def _assert_no_data(self):
@@ -688,6 +712,7 @@ class CompiledCacheTest(fixtures.TestBase):
                       Column('user_id', INT, primary_key=True,
                              test_needs_autoincrement=True),
                       Column('user_name', VARCHAR(20)),
+                      Column("extra_data", VARCHAR(20))
                       )
         metadata.create_all()
 
@@ -705,11 +730,52 @@ class CompiledCacheTest(fixtures.TestBase):
         cached_conn = conn.execution_options(compiled_cache=cache)
 
         ins = users.insert()
-        cached_conn.execute(ins, {'user_name': 'u1'})
-        cached_conn.execute(ins, {'user_name': 'u2'})
-        cached_conn.execute(ins, {'user_name': 'u3'})
+        with patch.object(
+            ins, "compile",
+                Mock(side_effect=ins.compile)) as compile_mock:
+            cached_conn.execute(ins, {'user_name': 'u1'})
+            cached_conn.execute(ins, {'user_name': 'u2'})
+            cached_conn.execute(ins, {'user_name': 'u3'})
+        eq_(compile_mock.call_count, 1)
         assert len(cache) == 1
         eq_(conn.execute("select count(*) from users").scalar(), 3)
+
+    def test_keys_independent_of_ordering(self):
+        conn = testing.db.connect()
+        conn.execute(
+            users.insert(),
+            {"user_id": 1, "user_name": "u1", "extra_data": "e1"})
+        cache = {}
+        cached_conn = conn.execution_options(compiled_cache=cache)
+
+        upd = users.update().where(users.c.user_id == bindparam("b_user_id"))
+
+        with patch.object(
+            upd, "compile",
+                Mock(side_effect=upd.compile)) as compile_mock:
+            cached_conn.execute(
+                upd, util.OrderedDict([
+                    ("b_user_id", 1),
+                    ("user_name", "u2"),
+                    ("extra_data", "e2")
+                ])
+            )
+            cached_conn.execute(
+                upd, util.OrderedDict([
+                    ("b_user_id", 1),
+                    ("extra_data", "e3"),
+                    ("user_name", "u3"),
+                ])
+            )
+            cached_conn.execute(
+                upd, util.OrderedDict([
+                    ("extra_data", "e4"),
+                    ("user_name", "u4"),
+                    ("b_user_id", 1),
+                ])
+            )
+        eq_(compile_mock.call_count, 1)
+        eq_(len(cache), 1)
 
 
 class MockStrategyTest(fixtures.TestBase):
@@ -940,6 +1006,17 @@ class ExecutionOptionsTest(fixtures.TestBase):
         c2 = e2.connect()
         eq_(c1._execution_options, {"foo": "bar"})
         eq_(c2._execution_options, {"foo": "bar", "bat": "hoho"})
+
+    def test_branched_connection_execution_options(self):
+        engine = testing_engine("sqlite://")
+
+        conn = engine.connect()
+        c2 = conn.execution_options(foo="bar")
+        c2_branch = c2.connect()
+        eq_(
+            c2_branch._execution_options,
+            {"foo": "bar"}
+        )
 
 
 class AlternateResultProxyTest(fixtures.TestBase):
@@ -1399,6 +1476,48 @@ class EngineEventsTest(fixtures.TestBase):
                 'begin', 'execute', 'cursor_execute', 'commit',
             ])
 
+    def test_transactional_named(self):
+        canary = []
+
+        def tracker(name):
+            def go(*args, **kw):
+                canary.append((name, set(kw)))
+            return go
+
+        engine = engines.testing_engine()
+        event.listen(engine, 'before_execute', tracker('execute'), named=True)
+        event.listen(
+            engine, 'before_cursor_execute',
+            tracker('cursor_execute'), named=True)
+        event.listen(engine, 'begin', tracker('begin'), named=True)
+        event.listen(engine, 'commit', tracker('commit'), named=True)
+        event.listen(engine, 'rollback', tracker('rollback'), named=True)
+
+        conn = engine.connect()
+        trans = conn.begin()
+        conn.execute(select([1]))
+        trans.rollback()
+        trans = conn.begin()
+        conn.execute(select([1]))
+        trans.commit()
+
+        eq_(
+            canary, [
+                ('begin', set(['conn', ])),
+                ('execute', set([
+                    'conn', 'clauseelement', 'multiparams', 'params'])),
+                ('cursor_execute', set([
+                    'conn', 'cursor', 'executemany',
+                    'statement', 'parameters', 'context'])),
+                ('rollback', set(['conn', ])), ('begin', set(['conn', ])),
+                ('execute', set([
+                    'conn', 'clauseelement', 'multiparams', 'params'])),
+                ('cursor_execute', set([
+                    'conn', 'cursor', 'executemany', 'statement',
+                    'parameters', 'context'])),
+                ('commit', set(['conn', ]))]
+        )
+
     @testing.requires.savepoints
     @testing.requires.two_phase_transactions
     def test_transactional_advanced(self):
@@ -1483,7 +1602,7 @@ class HandleErrorTest(fixtures.TestBase):
         listener = Mock(return_value=None)
         event.listen(engine, 'dbapi_error', listener)
 
-        nope = Exception("nope")
+        nope = SomeException("nope")
 
         class MyType(TypeDecorator):
             impl = Integer
@@ -1494,7 +1613,8 @@ class HandleErrorTest(fixtures.TestBase):
         with engine.connect() as conn:
             assert_raises_message(
                 tsa.exc.StatementError,
-                r"nope \(original cause: Exception: nope\) u?'SELECT 1 ",
+                r"\(test.engine.test_execute.SomeException\) "
+                "nope \[SQL\: u?'SELECT 1 ",
                 conn.execute,
                 select([1]).where(
                     column('foo') == literal('bar', MyType()))
@@ -1674,7 +1794,7 @@ class HandleErrorTest(fixtures.TestBase):
         listener = Mock(return_value=None)
         event.listen(engine, 'handle_error', listener)
 
-        nope = Exception("nope")
+        nope = SomeException("nope")
 
         class MyType(TypeDecorator):
             impl = Integer
@@ -1685,7 +1805,8 @@ class HandleErrorTest(fixtures.TestBase):
         with engine.connect() as conn:
             assert_raises_message(
                 tsa.exc.StatementError,
-                r"nope \(original cause: Exception: nope\) u?'SELECT 1 ",
+                r"\(test.engine.test_execute.SomeException\) "
+                "nope \[SQL\: u?'SELECT 1 ",
                 conn.execute,
                 select([1]).where(
                     column('foo') == literal('bar', MyType()))

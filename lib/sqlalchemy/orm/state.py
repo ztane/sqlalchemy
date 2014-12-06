@@ -21,7 +21,7 @@ from .base import PASSIVE_NO_RESULT, SQL_OK, NEVER_SET, ATTR_WAS_SET, \
 from . import base
 
 
-class InstanceState(interfaces._InspectionAttr):
+class InstanceState(interfaces.InspectionAttr):
     """tracks state information at the instance level.
 
     The :class:`.InstanceState` is a key object used by the
@@ -58,7 +58,6 @@ class InstanceState(interfaces._InspectionAttr):
     expired = False
     deleted = False
     _load_pending = False
-
     is_instance = True
 
     def __init__(self, obj, manager):
@@ -146,7 +145,16 @@ class InstanceState(interfaces._InspectionAttr):
     @util.dependencies("sqlalchemy.orm.session")
     def session(self, sessionlib):
         """Return the owning :class:`.Session` for this instance,
-        or ``None`` if none available."""
+        or ``None`` if none available.
+
+        Note that the result here can in some cases be *different*
+        from that of ``obj in session``; an object that's been deleted
+        will report as not ``in session``, however if the transaction is
+        still in progress, this attribute will still refer to that session.
+        Only when the transaction is completed does the object become
+        fully detached under normal circumstances.
+
+        """
         return sessionlib._state_session(self)
 
     @property
@@ -221,7 +229,7 @@ class InstanceState(interfaces._InspectionAttr):
 
     def _cleanup(self, ref):
         instance_dict = self._instance_dict()
-        if instance_dict:
+        if instance_dict is not None:
             instance_dict.discard(self)
 
         self.callables.clear()
@@ -259,8 +267,8 @@ class InstanceState(interfaces._InspectionAttr):
         try:
             return manager.original_init(*mixed[1:], **kwargs)
         except:
-            manager.dispatch.init_failure(self, args, kwargs)
-            raise
+            with util.safe_reraise():
+                manager.dispatch.init_failure(self, args, kwargs)
 
     def get_history(self, key, passive):
         return self.manager[key].impl.get_history(self, self.dict, passive)
@@ -334,20 +342,6 @@ class InstanceState(interfaces._InspectionAttr):
         if old is not None and self.manager[key].impl.collection:
             self.manager[key].impl._invalidate_collection(old)
         self.callables.pop(key, None)
-
-    def _expire_attribute_pre_commit(self, dict_, key):
-        """a fast expire that can be called by column loaders during a load.
-
-        The additional bookkeeping is finished up in commit_all().
-
-        Should only be called for scalar attributes.
-
-        This method is actually called a lot with joined-table
-        loading, when the second table isn't present in the result.
-
-        """
-        dict_.pop(key, None)
-        self.callables[key] = self
 
     @classmethod
     def _row_processor(cls, manager, fn, key):

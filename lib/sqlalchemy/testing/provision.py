@@ -1,8 +1,10 @@
 from sqlalchemy.engine import url as sa_url
 from sqlalchemy import text
 from sqlalchemy.util import compat
-from .. import config, engines
-import os
+from . import config, engines
+
+
+FOLLOWER_IDENT = None
 
 
 class register(object):
@@ -36,13 +38,7 @@ class register(object):
 def create_follower_db(follower_ident):
 
     for cfg in _configs_for_db_operation():
-        url = cfg.db.url
-        backend = url.get_backend_name()
         _create_db(cfg, cfg.db, follower_ident)
-
-        new_url = sa_url.make_url(str(url))
-
-        new_url.database = follower_ident
 
 
 def configure_follower(follower_ident):
@@ -63,7 +59,6 @@ def setup_config(db_url, db_opts, options, file_config, follower_ident):
 
 def drop_follower_db(follower_ident):
     for cfg in _configs_for_db_operation():
-        url = cfg.db.url
         _drop_db(cfg, cfg.db, follower_ident)
 
 
@@ -110,9 +105,13 @@ def _follower_url_from_main(url, ident):
     return url
 
 
-#@_follower_url_from_main.for_db("sqlite")
-#def _sqlite_follower_url_from_main(url, ident):
-#    return sa_url.make_url("sqlite:///%s.db" % ident)
+@_follower_url_from_main.for_db("sqlite")
+def _sqlite_follower_url_from_main(url, ident):
+    url = sa_url.make_url(url)
+    if not url.database or url.database == ':memory:':
+        return url
+    else:
+        return sa_url.make_url("sqlite:///%s.db" % ident)
 
 
 @_create_db.for_db("postgresql")
@@ -121,7 +120,7 @@ def _pg_create_db(cfg, eng, ident):
             isolation_level="AUTOCOMMIT") as conn:
         try:
             _pg_drop_db(cfg, conn, ident)
-        except:
+        except Exception:
             pass
         currentdb = conn.scalar("select current_database()")
         conn.execute("CREATE DATABASE %s TEMPLATE %s" % (ident, currentdb))
@@ -132,7 +131,7 @@ def _mysql_create_db(cfg, eng, ident):
     with eng.connect() as conn:
         try:
             _mysql_drop_db(cfg, conn, ident)
-        except:
+        except Exception:
             pass
         conn.execute("CREATE DATABASE %s" % ident)
         conn.execute("CREATE DATABASE %s_test_schema" % ident)
@@ -174,15 +173,15 @@ def _mysql_drop_db(cfg, eng, ident):
     with eng.connect() as conn:
         try:
             conn.execute("DROP DATABASE %s_test_schema" % ident)
-        except:
+        except Exception:
             pass
         try:
             conn.execute("DROP DATABASE %s_test_schema_2" % ident)
-        except:
+        except Exception:
             pass
         try:
             conn.execute("DROP DATABASE %s" % ident)
-        except:
+        except Exception:
             pass
 
 

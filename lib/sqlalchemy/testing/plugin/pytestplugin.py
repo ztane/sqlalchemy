@@ -1,7 +1,13 @@
+try:
+    # installed by bootstrap.py
+    import sqla_plugin_base as plugin_base
+except ImportError:
+    # assume we're a package, use traditional import
+    from . import plugin_base
+
 import pytest
 import argparse
 import inspect
-from . import plugin_base
 import collections
 import itertools
 
@@ -42,6 +48,8 @@ def pytest_configure(config):
     plugin_base.set_coverage_flag(bool(getattr(config.option,
                                                "cov_source", False)))
 
+
+def pytest_sessionstart(session):
     plugin_base.post_begin()
 
 if has_xdist:
@@ -54,11 +62,11 @@ if has_xdist:
         plugin_base.memoize_important_follower_config(node.slaveinput)
 
         node.slaveinput["follower_ident"] = "test_%s" % next(_follower_count)
-        from . import provision
+        from sqlalchemy.testing import provision
         provision.create_follower_db(node.slaveinput["follower_ident"])
 
     def pytest_testnodedown(node, error):
-        from . import provision
+        from sqlalchemy.testing import provision
         provision.drop_follower_db(node.slaveinput["follower_ident"])
 
 
@@ -74,6 +82,9 @@ def pytest_collection_modifyitems(session, config, items):
     # new classes to a module on the fly.
 
     rebuilt_items = collections.defaultdict(list)
+    items[:] = [
+        item for item in
+        items if isinstance(item.parent, pytest.Instance)]
     test_classes = set(item.parent for item in items)
     for test_class in test_classes:
         for sub_cls in plugin_base.generate_sub_tests(
@@ -115,7 +126,6 @@ def pytest_pycollect_makeitem(collector, name, obj):
 
 _current_class = None
 
-
 def pytest_runtest_setup(item):
     # here we seem to get called only based on what we collected
     # in pytest_collection_modifyitems.   So to do class-based stuff
@@ -126,16 +136,18 @@ def pytest_runtest_setup(item):
         return
 
     # ... so we're doing a little dance here to figure it out...
-    if item.parent.parent is not _current_class:
-
+    if _current_class is None:
         class_setup(item.parent.parent)
         _current_class = item.parent.parent
 
         # this is needed for the class-level, to ensure that the
         # teardown runs after the class is completed with its own
         # class-level teardown...
-        item.parent.parent.addfinalizer(
-            lambda: class_teardown(item.parent.parent))
+        def finalize():
+            global _current_class
+            class_teardown(item.parent.parent)
+            _current_class = None
+        item.parent.parent.addfinalizer(finalize)
 
     test_setup(item)
 

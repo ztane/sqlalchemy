@@ -1814,7 +1814,11 @@ class HistoryTest(fixtures.TestBase):
         self._commit_someattr(f)
 
         state = attributes.instance_state(f)
-        state._expire_attribute_pre_commit(state.dict, 'someattr')
+        # do the same thing that
+        # populators.expire.append((self.key, True))
+        # does in loading.py
+        state.dict.pop('someattr', None)
+        state.callables['someattr'] = state
 
         def scalar_loader(state, toload):
             state.dict['someattr'] = 'one'
@@ -2517,6 +2521,90 @@ class ListenerTest(fixtures.ORMTest):
         assert f1.barlist[0].data == 'some bar appended'
         f1.barset.add(b1)
         assert f1.barset.pop().data == 'some bar appended'
+
+    def test_named(self):
+        canary = Mock()
+
+        class Foo(object):
+            pass
+
+        class Bar(object):
+            pass
+
+        instrumentation.register_class(Foo)
+        instrumentation.register_class(Bar)
+        attributes.register_attribute(
+            Foo, 'data', uselist=False,
+            useobject=False)
+        attributes.register_attribute(
+            Foo, 'barlist', uselist=True,
+            useobject=True)
+
+        event.listen(Foo.data, 'set', canary.set, named=True)
+        event.listen(Foo.barlist, 'append', canary.append, named=True)
+        event.listen(Foo.barlist, 'remove', canary.remove, named=True)
+
+        f1 = Foo()
+        b1 = Bar()
+        f1.data = 5
+        f1.barlist.append(b1)
+        f1.barlist.remove(b1)
+        eq_(
+            canary.mock_calls,
+            [
+                call.set(
+                    oldvalue=attributes.NO_VALUE,
+                    initiator=attributes.Event(
+                        Foo.data.impl, attributes.OP_REPLACE),
+                    target=f1, value=5),
+                call.append(
+                    initiator=attributes.Event(
+                        Foo.barlist.impl, attributes.OP_APPEND),
+                    target=f1,
+                    value=b1),
+                call.remove(
+                    initiator=attributes.Event(
+                        Foo.barlist.impl, attributes.OP_REMOVE),
+                    target=f1,
+                    value=b1)]
+        )
+
+    def test_collection_link_events(self):
+        class Foo(object):
+            pass
+        class Bar(object):
+            pass
+        instrumentation.register_class(Foo)
+        instrumentation.register_class(Bar)
+        attributes.register_attribute(Foo, 'barlist', uselist=True,
+                useobject=True)
+
+        canary = Mock()
+        event.listen(Foo.barlist, "init_collection", canary.init)
+        event.listen(Foo.barlist, "dispose_collection", canary.dispose)
+
+        f1 = Foo()
+        eq_(f1.barlist, [])
+        adapter_one = f1.barlist._sa_adapter
+        eq_(canary.init.mock_calls, [call(f1, [], adapter_one)])
+
+        b1 = Bar()
+        f1.barlist.append(b1)
+
+        b2 = Bar()
+        f1.barlist = [b2]
+        adapter_two = f1.barlist._sa_adapter
+        eq_(canary.init.mock_calls, [
+            call(f1, [], adapter_one),
+            call(f1, [b2], adapter_two),
+        ])
+        eq_(
+            canary.dispose.mock_calls,
+            [
+                call(f1, [], adapter_one)
+            ]
+        )
+
 
     def test_none_on_collection_event(self):
         """test that append/remove of None in collections emits events.

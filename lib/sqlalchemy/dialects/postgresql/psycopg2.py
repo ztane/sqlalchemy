@@ -32,10 +32,25 @@ psycopg2-specific keyword arguments which are accepted by
   way of enabling this mode on a per-execution basis.
 * ``use_native_unicode``: Enable the usage of Psycopg2 "native unicode" mode
   per connection.  True by default.
+
+  .. seealso::
+
+    :ref:`psycopg2_disable_native_unicode`
+
 * ``isolation_level``: This option, available for all PostgreSQL dialects,
   includes the ``AUTOCOMMIT`` isolation level when using the psycopg2
-  dialect.  See :ref:`psycopg2_isolation_level`.
+  dialect.
 
+  .. seealso::
+
+    :ref:`psycopg2_isolation_level`
+
+* ``client_encoding``: sets the client encoding in a libpq-agnostic way,
+  using psycopg2's ``set_client_encoding()`` method.
+
+  .. seealso::
+
+    :ref:`psycopg2_unicode`
 
 Unix Domain Connections
 ------------------------
@@ -75,8 +90,10 @@ The following DBAPI-specific options are respected when used with
   If ``None`` or not set, the ``server_side_cursors`` option of the
   :class:`.Engine` is used.
 
-Unicode
--------
+.. _psycopg2_unicode:
+
+Unicode with Psycopg2
+----------------------
 
 By default, the psycopg2 driver uses the ``psycopg2.extensions.UNICODE``
 extension, such that the DBAPI receives and returns all strings as Python
@@ -84,27 +101,51 @@ Unicode objects directly - SQLAlchemy passes these values through without
 change.   Psycopg2 here will encode/decode string values based on the
 current "client encoding" setting; by default this is the value in
 the ``postgresql.conf`` file, which often defaults to ``SQL_ASCII``.
-Typically, this can be changed to ``utf-8``, as a more useful default::
+Typically, this can be changed to ``utf8``, as a more useful default::
 
-    #client_encoding = sql_ascii # actually, defaults to database
+    # postgresql.conf file
+
+    # client_encoding = sql_ascii # actually, defaults to database
                                  # encoding
     client_encoding = utf8
 
 A second way to affect the client encoding is to set it within Psycopg2
-locally.   SQLAlchemy will call psycopg2's ``set_client_encoding()``
-method (see:
-http://initd.org/psycopg/docs/connection.html#connection.set_client_encoding)
+locally.   SQLAlchemy will call psycopg2's
+:meth:`psycopg2:connection.set_client_encoding` method
 on all new connections based on the value passed to
 :func:`.create_engine` using the ``client_encoding`` parameter::
 
+    # set_client_encoding() setting;
+    # works for *all* Postgresql versions
     engine = create_engine("postgresql://user:pass@host/dbname",
                            client_encoding='utf8')
 
 This overrides the encoding specified in the Postgresql client configuration.
+When using the parameter in this way, the psycopg2 driver emits
+``SET client_encoding TO 'utf8'`` on the connection explicitly, and works
+in all Postgresql versions.
 
-.. versionadded:: 0.7.3
-    The psycopg2-specific ``client_encoding`` parameter to
-    :func:`.create_engine`.
+Note that the ``client_encoding`` setting as passed to :func:`.create_engine`
+is **not the same** as the more recently added ``client_encoding`` parameter
+now supported by libpq directly.   This is enabled when ``client_encoding``
+is passed directly to ``psycopg2.connect()``, and from SQLAlchemy is passed
+using the :paramref:`.create_engine.connect_args` parameter::
+
+    # libpq direct parameter setting;
+    # only works for Postgresql **9.1 and above**
+    engine = create_engine("postgresql://user:pass@host/dbname",
+                           connect_args={'client_encoding': 'utf8'})
+
+    # using the query string is equivalent
+    engine = create_engine("postgresql://user:pass@host/dbname?client_encoding=utf8")
+
+The above parameter was only added to libpq as of version 9.1 of Postgresql,
+so using the previous method is better for cross-version support.
+
+.. _psycopg2_disable_native_unicode:
+
+Disabling Native Unicode
+^^^^^^^^^^^^^^^^^^^^^^^^
 
 SQLAlchemy can also be instructed to skip the usage of the psycopg2
 ``UNICODE`` extension and to instead utilize its own unicode encode/decode
@@ -116,8 +157,56 @@ in and coerce from bytes on the way back,
 using the value of the :func:`.create_engine` ``encoding`` parameter, which
 defaults to ``utf-8``.
 SQLAlchemy's own unicode encode/decode functionality is steadily becoming
-obsolete as more DBAPIs support unicode fully along with the approach of
-Python 3; in modern usage psycopg2 should be relied upon to handle unicode.
+obsolete as most DBAPIs now support unicode fully.
+
+Bound Parameter Styles
+----------------------
+
+The default parameter style for the psycopg2 dialect is "pyformat", where
+SQL is rendered using ``%(paramname)s`` style.   This format has the limitation
+that it does not accommodate the unusual case of parameter names that
+actually contain percent or parenthesis symbols; as SQLAlchemy in many cases
+generates bound parameter names based on the name of a column, the presence
+of these characters in a column name can lead to problems.
+
+There are two solutions to the issue of a :class:`.schema.Column` that contains
+one of these characters in its name.  One is to specify the
+:paramref:`.schema.Column.key` for columns that have such names::
+
+    measurement = Table('measurement', metadata,
+        Column('Size (meters)', Integer, key='size_meters')
+    )
+
+Above, an INSERT statement such as ``measurement.insert()`` will use
+``size_meters`` as the parameter name, and a SQL expression such as
+``measurement.c.size_meters > 10`` will derive the bound parameter name
+from the ``size_meters`` key as well.
+
+.. versionchanged:: 1.0.0 - SQL expressions will use :attr:`.Column.key`
+   as the source of naming when anonymous bound parameters are created
+   in SQL expressions; previously, this behavior only applied to
+   :meth:`.Table.insert` and :meth:`.Table.update` parameter names.
+
+The other solution is to use a positional format; psycopg2 allows use of the
+"format" paramstyle, which can be passed to
+:paramref:`.create_engine.paramstyle`::
+
+    engine = create_engine(
+        'postgresql://scott:tiger@localhost:5432/test', paramstyle='format')
+
+With the above engine, instead of a statement like::
+
+    INSERT INTO measurement ("Size (meters)") VALUES (%(Size (meters))s)
+    {'Size (meters)': 1}
+
+we instead see::
+
+    INSERT INTO measurement ("Size (meters)") VALUES (%s)
+    (1, )
+
+Where above, the dictionary style is converted into a tuple with positional
+style.
+
 
 Transactions
 ------------
@@ -512,12 +601,14 @@ class PGDialect_psycopg2(PGDialect):
     def is_disconnect(self, e, connection, cursor):
         if isinstance(e, self.dbapi.Error):
             # check the "closed" flag.  this might not be
-            # present on old psycopg2 versions
+            # present on old psycopg2 versions.   Also,
+            # this flag doesn't actually help in a lot of disconnect
+            # situations, so don't rely on it.
             if getattr(connection, 'closed', False):
                 return True
 
-            # legacy checks based on strings.  the "closed" check
-            # above most likely obviates the need for any of these.
+            # checks based on strings.  in the case that .closed
+            # didn't cut it, fall back onto these.
             str_e = str(e).partition("\n")[0]
             for msg in [
                 # these error messages from libpq: interfaces/libpq/fe-misc.c
@@ -534,8 +625,10 @@ class PGDialect_psycopg2(PGDialect):
                 # not sure where this path is originally from, it may
                 # be obsolete.   It really says "losed", not "closed".
                 'losed the connection unexpectedly',
-                # this can occur in newer SSL
-                'connection has been closed unexpectedly'
+                # these can occur in newer SSL
+                'connection has been closed unexpectedly',
+                'SSL SYSCALL error: Bad file descriptor',
+                'SSL SYSCALL error: EOF detected',
             ]:
                 idx = str_e.find(msg)
                 if idx >= 0 and '"' not in str_e[:idx]:

@@ -17,7 +17,9 @@ from sqlalchemy.testing.util import gc_collect
 import decimal
 import gc
 from sqlalchemy.testing import fixtures
+from sqlalchemy import util
 import weakref
+import itertools
 
 
 class A(fixtures.ComparableEntity):
@@ -376,6 +378,18 @@ class MemUsageTest(EnsureZeroed):
         finally:
             metadata.drop_all()
 
+    def test_warnings_util(self):
+        counter = itertools.count()
+        import warnings
+        warnings.filterwarnings("ignore", "memusage warning.*")
+
+        @profile_memory()
+        def go():
+            util.warn_limited(
+                "memusage warning, param1: %s, param2: %s",
+                (next(counter), next(counter)))
+        go()
+
     def test_mapper_reset(self):
         metadata = MetaData(self.engine)
 
@@ -642,6 +656,32 @@ class MemUsageTest(EnsureZeroed):
             r = e.execute(t.alias().select())
             for row in r:
                 row[t.c.x]
+        go()
+
+    def test_many_discarded_relationships(self):
+        """a use case that really isn't supported, nonetheless we can
+        guard against memleaks here so why not"""
+
+        m1 = MetaData()
+        t1 = Table('t1', m1, Column('id', Integer, primary_key=True))
+        t2 = Table(
+            't2', m1, Column('id', Integer, primary_key=True),
+            Column('t1id', ForeignKey('t1.id')))
+
+        class T1(object):
+            pass
+        t1_mapper = mapper(T1, t1)
+
+        @testing.emits_warning()
+        @profile_memory()
+        def go():
+            class T2(object):
+                pass
+            t2_mapper = mapper(T2, t2)
+            t1_mapper.add_property("bar", relationship(t2_mapper))
+            s1 = Session()
+            # this causes the path_registry to be invoked
+            s1.query(t1_mapper)._compile_context()
         go()
 
     # fails on newer versions of pysqlite due to unusual memory behvior

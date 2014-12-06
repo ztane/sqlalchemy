@@ -308,13 +308,29 @@ class Dialect(object):
     def get_table_names(self, connection, schema=None, **kw):
         """Return a list of table names for `schema`."""
 
-        raise NotImplementedError
+        raise NotImplementedError()
+
+    def get_temp_table_names(self, connection, schema=None, **kw):
+        """Return a list of temporary table names on the given connection,
+        if supported by the underlying backend.
+
+        """
+
+        raise NotImplementedError()
 
     def get_view_names(self, connection, schema=None, **kw):
         """Return a list of all view names available in the database.
 
         schema:
           Optional, retrieve names from a non-default schema.
+        """
+
+        raise NotImplementedError()
+
+    def get_temp_view_names(self, connection, schema=None, **kw):
+        """Return a list of temporary view names on the given connection,
+        if supported by the underlying backend.
+
         """
 
         raise NotImplementedError()
@@ -901,7 +917,23 @@ class ExceptionContext(object):
     connection = None
     """The :class:`.Connection` in use during the exception.
 
-    This member is always present.
+    This member is present, except in the case of a failure when
+    first connecting.
+
+    .. seealso::
+
+        :attr:`.ExceptionContext.engine`
+
+
+    """
+
+    engine = None
+    """The :class:`.Engine` in use during the exception.
+
+    This member should always be present, even in the case of a failure
+    when first connecting.
+
+    .. versionadded:: 1.0.0
 
     """
 

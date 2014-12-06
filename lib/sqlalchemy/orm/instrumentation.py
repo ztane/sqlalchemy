@@ -41,6 +41,8 @@ class ClassManager(dict):
     MANAGER_ATTR = base.DEFAULT_MANAGER_ATTR
     STATE_ATTR = base.DEFAULT_STATE_ATTR
 
+    _state_setter = staticmethod(util.attrsetter(STATE_ATTR))
+
     deferred_scalar_loader = None
 
     original_init = object.__init__
@@ -97,7 +99,7 @@ class ClassManager(dict):
 
     def _all_sqla_attributes(self, exclude=None):
         """return an iterator of all classbound attributes that are
-        implement :class:`._InspectionAttr`.
+        implement :class:`.InspectionAttr`.
 
         This includes :class:`.QueryableAttribute` as well as extension
         types such as :class:`.hybrid_property` and
@@ -110,7 +112,7 @@ class ClassManager(dict):
             for key in set(supercls.__dict__).difference(exclude):
                 exclude.add(key)
                 val = supercls.__dict__[key]
-                if isinstance(val, interfaces._InspectionAttr):
+                if isinstance(val, interfaces.InspectionAttr):
                     yield key, val
 
     def _attr_has_impl(self, key):
@@ -288,15 +290,15 @@ class ClassManager(dict):
 
     def new_instance(self, state=None):
         instance = self.class_.__new__(self.class_)
-        setattr(instance, self.STATE_ATTR,
-                self._state_constructor(instance, self)
-                if not state else state)
+        if state is None:
+            state = self._state_constructor(instance, self)
+        self._state_setter(instance, state)
         return instance
 
     def setup_instance(self, instance, state=None):
-        setattr(instance, self.STATE_ATTR,
-                self._state_constructor(instance, self)
-                if not state else state)
+        if state is None:
+            state = self._state_constructor(instance, self)
+        self._state_setter(instance, state)
 
     def teardown_instance(self, instance):
         delattr(instance, self.STATE_ATTR)
@@ -323,7 +325,7 @@ class ClassManager(dict):
                 _new_state_if_none(instance)
         else:
             state = self._state_constructor(instance, self)
-            setattr(instance, self.STATE_ATTR, state)
+            self._state_setter(instance, state)
             return state
 
     def has_state(self, instance):

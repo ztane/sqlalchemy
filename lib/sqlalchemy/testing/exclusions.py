@@ -133,7 +133,7 @@ class compound(object):
                     name, fail._as_string(config), str(ex))))
                 break
         else:
-            raise ex
+            util.raise_from_cause(ex)
 
     def _expect_success(self, config, name='block'):
         if not self.fails:
@@ -178,8 +178,7 @@ class Predicate(object):
     @classmethod
     def as_predicate(cls, predicate, description=None):
         if isinstance(predicate, compound):
-            return cls.as_predicate(predicate.fails.union(predicate.skips))
-
+            return cls.as_predicate(predicate.enabled_for_config, description)
         elif isinstance(predicate, Predicate):
             if description and predicate.description is None:
                 predicate.description = description
@@ -426,7 +425,7 @@ def skip(db, reason=None):
 
 def only_on(dbs, reason=None):
     return only_if(
-        OrPredicate([SpecPredicate(db) for db in util.to_list(dbs)])
+        OrPredicate([Predicate.as_predicate(db) for db in util.to_list(dbs)])
     )
 
 

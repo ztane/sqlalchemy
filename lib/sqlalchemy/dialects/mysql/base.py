@@ -190,15 +190,13 @@ SQLAlchemy standardizes the DBAPI ``cursor.rowcount`` attribute to be the
 usual definition of "number of rows matched by an UPDATE or DELETE" statement.
 This is in contradiction to the default setting on most MySQL DBAPI drivers,
 which is "number of rows actually modified/deleted".  For this reason, the
-SQLAlchemy MySQL dialects always set the ``constants.CLIENT.FOUND_ROWS`` flag,
-or whatever is equivalent for the DBAPI in use, on connect, unless the flag
-value is overridden using DBAPI-specific options
-(such as ``client_flag`` for the MySQL-Python driver, ``found_rows`` for the
-OurSQL driver).
+SQLAlchemy MySQL dialects always add the ``constants.CLIENT.FOUND_ROWS``
+flag, or whatever is equivalent for the target dialect, upon connection.
+This setting is currently hardcoded.
 
-See also:
+.. seealso::
 
-:attr:`.ResultProxy.rowcount`
+    :attr:`.ResultProxy.rowcount`
 
 
 CAST Support
@@ -342,6 +340,29 @@ reflection will not include foreign keys.  For these tables, you may supply a
 .. seealso::
 
     :ref:`mysql_storage_engines`
+
+.. _mysql_unique_constraints:
+
+MySQL Unique Constraints and Reflection
+---------------------------------------
+
+SQLAlchemy supports both the :class:`.Index` construct with the
+flag ``unique=True``, indicating a UNIQUE index, as well as the
+:class:`.UniqueConstraint` construct, representing a UNIQUE constraint.
+Both objects/syntaxes are supported by MySQL when emitting DDL to create
+these constraints.  However, MySQL does not have a unique constraint
+construct that is separate from a unique index; that is, the "UNIQUE"
+constraint on MySQL is equivalent to creating a "UNIQUE INDEX".
+
+When reflecting these constructs, the :meth:`.Inspector.get_indexes`
+and the :meth:`.Inspector.get_unique_constraints` methods will **both**
+return an entry for a UNIQUE index in MySQL.  However, when performing
+full table reflection using ``Table(..., autoload=True)``,
+the :class:`.UniqueConstraint` construct is
+**not** part of the fully reflected :class:`.Table` construct under any
+circumstances; this construct is always represented by a :class:`.Index`
+with the ``unique=True`` setting present in the :attr:`.Table.indexes`
+collection.
 
 
 .. _mysql_timestamp_null:
@@ -579,6 +600,14 @@ class _StringType(sqltypes.String):
     def __repr__(self):
         return util.generic_repr(self,
                                  to_inspect=[_StringType, sqltypes.String])
+
+
+class _MatchType(sqltypes.Float, sqltypes.MatchType):
+    def __init__(self, **kw):
+        # TODO: float arguments?
+        sqltypes.Float.__init__(self)
+        sqltypes.MatchType.__init__(self)
+
 
 
 class NUMERIC(_NumericType, sqltypes.NUMERIC):
@@ -1523,6 +1552,7 @@ colspecs = {
     sqltypes.Float: FLOAT,
     sqltypes.Time: TIME,
     sqltypes.Enum: ENUM,
+    sqltypes.MatchType: _MatchType
 }
 
 # Everything 3.23 through 5.1 excepting OpenGIS types.
@@ -1639,6 +1669,14 @@ class MySQLCompiler(compiler.SQLCompiler):
             value = value.replace('\\', '\\\\')
         return value
 
+    # override native_boolean=False behavior here, as
+    # MySQL still supports native boolean
+    def visit_true(self, element, **kw):
+        return "true"
+
+    def visit_false(self, element, **kw):
+        return "false"
+
     def get_select_precolumns(self, select):
         """Add special MySQL keywords in place of DISTINCT.
 
@@ -1664,13 +1702,13 @@ class MySQLCompiler(compiler.SQLCompiler):
              " ON ",
              self.process(join.onclause, **kwargs)))
 
-    def for_update_clause(self, select):
+    def for_update_clause(self, select, **kw):
         if select._for_update_arg.read:
             return " LOCK IN SHARE MODE"
         else:
             return " FOR UPDATE"
 
-    def limit_clause(self, select):
+    def limit_clause(self, select, **kw):
         # MySQL supports:
         #   LIMIT <limit>
         #   LIMIT <offset>, <limit>
@@ -1696,15 +1734,15 @@ class MySQLCompiler(compiler.SQLCompiler):
                 # bound as part of MySQL's "syntax" for OFFSET with
                 # no LIMIT
                 return ' \n LIMIT %s, %s' % (
-                    self.process(offset_clause),
+                    self.process(offset_clause, **kw),
                     "18446744073709551615")
             else:
                 return ' \n LIMIT %s, %s' % (
-                    self.process(offset_clause),
-                    self.process(limit_clause))
+                    self.process(offset_clause, **kw),
+                    self.process(limit_clause, **kw))
         else:
             # No offset provided, so just use the limit
-            return ' \n LIMIT %s' % (self.process(limit_clause),)
+            return ' \n LIMIT %s' % (self.process(limit_clause, **kw),)
 
     def update_limit_clause(self, update_stmt):
         limit = update_stmt.kwargs.get('%s_limit' % self.dialect.name, None)
@@ -2217,6 +2255,10 @@ class MySQLDialect(default.DefaultDialect):
     name = 'mysql'
     supports_alter = True
 
+    # MySQL has no true "boolean" type; we
+    # allow for the "true" and "false" keywords, however
+    supports_native_boolean = False
+
     # identifiers are 64, however aliases can be 255...
     max_identifier_length = 255
     max_index_name_length = 64
@@ -2307,7 +2349,7 @@ class MySQLDialect(default.DefaultDialect):
         # basic operations via autocommit fail.
         try:
             dbapi_connection.commit()
-        except:
+        except Exception:
             if self.server_version_info < (3, 23, 15):
                 args = sys.exc_info()[1].args
                 if args and args[0] == 1064:
@@ -2319,7 +2361,7 @@ class MySQLDialect(default.DefaultDialect):
 
         try:
             dbapi_connection.rollback()
-        except:
+        except Exception:
             if self.server_version_info < (3, 23, 15):
                 args = sys.exc_info()[1].args
                 if args and args[0] == 1064:
@@ -2560,13 +2602,14 @@ class MySQLDialect(default.DefaultDialect):
                 pass
             else:
                 self.logger.info(
-                    "Converting unknown KEY type %s to a plain KEY" % flavor)
+                    "Converting unknown KEY type %s to a plain KEY", flavor)
                 pass
             index_d = {}
             index_d['name'] = spec['name']
             index_d['column_names'] = [s[0] for s in spec['columns']]
             index_d['unique'] = unique
-            index_d['type'] = flavor
+            if flavor:
+                index_d['type'] = flavor
             indexes.append(index_d)
         return indexes
 
@@ -2579,7 +2622,8 @@ class MySQLDialect(default.DefaultDialect):
         return [
             {
                 'name': key['name'],
-                'column_names': [col[0] for col in key['columns']]
+                'column_names': [col[0] for col in key['columns']],
+                'duplicates_index': key['name'],
             }
             for key in parsed_state.keys
             if key['type'] == 'UNIQUE'

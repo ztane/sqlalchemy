@@ -16,7 +16,7 @@ from sqlalchemy import testing
 from sqlalchemy.testing import ComparesTables, AssertsCompiledSQL
 from sqlalchemy.testing import eq_, is_, mock
 from contextlib import contextmanager
-
+from sqlalchemy import util
 
 class MetaDataTest(fixtures.TestBase, ComparesTables):
 
@@ -227,6 +227,50 @@ class MetaDataTest(fixtures.TestBase, ComparesTables):
         fk1 = ForeignKeyConstraint(('foo', ), ('bar', ), table=t1)
         assert fk1 in t1.constraints
 
+    def test_fk_constraint_col_collection_w_table(self):
+        c1 = Column('foo', Integer)
+        c2 = Column('bar', Integer)
+        m = MetaData()
+        t1 = Table('t', m, c1, c2)
+        fk1 = ForeignKeyConstraint(('foo', ), ('bar', ), table=t1)
+        eq_(dict(fk1.columns), {"foo": c1})
+
+    def test_fk_constraint_col_collection_no_table(self):
+        fk1 = ForeignKeyConstraint(('foo', 'bat'), ('bar', 'hoho'))
+        eq_(dict(fk1.columns), {})
+        eq_(fk1.column_keys, ['foo', 'bat'])
+        eq_(fk1._col_description, 'foo, bat')
+        eq_(fk1._elements, {"foo": fk1.elements[0], "bat": fk1.elements[1]})
+
+    def test_fk_constraint_col_collection_no_table_real_cols(self):
+        c1 = Column('foo', Integer)
+        c2 = Column('bar', Integer)
+        fk1 = ForeignKeyConstraint((c1, ), (c2, ))
+        eq_(dict(fk1.columns), {})
+        eq_(fk1.column_keys, ['foo'])
+        eq_(fk1._col_description, 'foo')
+        eq_(fk1._elements, {"foo": fk1.elements[0]})
+
+    def test_fk_constraint_col_collection_added_to_table(self):
+        c1 = Column('foo', Integer)
+        m = MetaData()
+        fk1 = ForeignKeyConstraint(('foo', ), ('bar', ))
+        Table('t', m, c1, fk1)
+        eq_(dict(fk1.columns), {"foo": c1})
+        eq_(fk1._elements, {"foo": fk1.elements[0]})
+
+    def test_fk_constraint_col_collection_via_fk(self):
+        fk = ForeignKey('bar')
+        c1 = Column('foo', Integer, fk)
+        m = MetaData()
+        t1 = Table('t', m, c1)
+        fk1 = fk.constraint
+        eq_(fk1.column_keys, ['foo'])
+        assert fk1 in t1.constraints
+        eq_(fk1.column_keys, ['foo'])
+        eq_(dict(fk1.columns), {"foo": c1})
+        eq_(fk1._elements, {"foo": fk})
+
     def test_fk_no_such_parent_col_error(self):
         meta = MetaData()
         a = Table('a', meta, Column('a', Integer))
@@ -348,6 +392,20 @@ class MetaDataTest(fixtures.TestBase, ComparesTables):
               )
         assert t.c.x.default is s2
         assert m1._sequences['x_seq'] is s2
+
+
+    def test_sequence_attach_to_table(self):
+        m1 = MetaData()
+        s1 = Sequence("s")
+        t = Table('a', m1, Column('x', Integer, s1))
+        assert s1.metadata is m1
+
+    def test_sequence_attach_to_existing_table(self):
+        m1 = MetaData()
+        s1 = Sequence("s")
+        t = Table('a', m1, Column('x', Integer))
+        t.c.x._init_items(s1)
+        assert s1.metadata is m1
 
     def test_pickle_metadata_sequence_implicit(self):
         m1 = MetaData()
@@ -472,6 +530,7 @@ class MetaDataTest(fixtures.TestBase, ComparesTables):
 
 class ToMetaDataTest(fixtures.TestBase, ComparesTables):
 
+    @testing.requires.check_constraints
     def test_copy(self):
         from sqlalchemy.testing.schema import Table
         meta = MetaData()
@@ -663,6 +722,86 @@ class ToMetaDataTest(fixtures.TestBase, ComparesTables):
                                                       == table2_c.c.myid))
         eq_(str(table_c.join(table2_c).onclause),
             'myschema.mytable.myid = myschema.othertable.myid')
+
+    def test_change_name_retain_metadata(self):
+        meta = MetaData()
+
+        table = Table('mytable', meta,
+                      Column('myid', Integer, primary_key=True),
+                      Column('name', String(40), nullable=True),
+                      Column('description', String(30),
+                             CheckConstraint("description='hi'")),
+                      UniqueConstraint('name'),
+                      schema='myschema',
+                      )
+
+        table2 = table.tometadata(table.metadata, name='newtable')
+        table3 = table.tometadata(table.metadata, schema='newschema',
+                                  name='newtable')
+
+        assert table.metadata is table2.metadata
+        assert table.metadata is table3.metadata
+        eq_((table.name, table2.name, table3.name),
+            ('mytable', 'newtable', 'newtable'))
+        eq_((table.key, table2.key, table3.key),
+            ('myschema.mytable', 'myschema.newtable', 'newschema.newtable'))
+
+    def test_change_name_change_metadata(self):
+        meta = MetaData()
+        meta2 = MetaData()
+
+        table = Table('mytable', meta,
+                      Column('myid', Integer, primary_key=True),
+                      Column('name', String(40), nullable=True),
+                      Column('description', String(30),
+                             CheckConstraint("description='hi'")),
+                      UniqueConstraint('name'),
+                      schema='myschema',
+                      )
+
+        table2 = table.tometadata(meta2, name='newtable')
+
+        assert table.metadata is not table2.metadata
+        eq_((table.name, table2.name),
+            ('mytable', 'newtable'))
+        eq_((table.key, table2.key),
+            ('myschema.mytable', 'myschema.newtable'))
+
+    def test_change_name_selfref_fk_moves(self):
+        meta = MetaData()
+
+        referenced = Table('ref', meta,
+                           Column('id', Integer, primary_key=True),
+                           )
+        table = Table('mytable', meta,
+                      Column('id', Integer, primary_key=True),
+                      Column('parent_id', ForeignKey('mytable.id')),
+                      Column('ref_id', ForeignKey('ref.id'))
+                      )
+
+        table2 = table.tometadata(table.metadata, name='newtable')
+        assert table.metadata is table2.metadata
+        assert table2.c.ref_id.references(referenced.c.id)
+        assert table2.c.parent_id.references(table2.c.id)
+
+    def test_change_name_selfref_fk_moves_w_schema(self):
+        meta = MetaData()
+
+        referenced = Table('ref', meta,
+                           Column('id', Integer, primary_key=True),
+                           )
+        table = Table('mytable', meta,
+                      Column('id', Integer, primary_key=True),
+                      Column('parent_id', ForeignKey('mytable.id')),
+                      Column('ref_id', ForeignKey('ref.id'))
+                      )
+
+        table2 = table.tometadata(
+            table.metadata, name='newtable', schema='newschema')
+        ref2 = referenced.tometadata(table.metadata, schema='newschema')
+        assert table.metadata is table2.metadata
+        assert table2.c.ref_id.references(ref2.c.id)
+        assert table2.c.parent_id.references(table2.c.id)
 
     def _assert_fk(self, t2, schema, expected, referred_schema_fn=None):
         m2 = MetaData()
@@ -956,8 +1095,75 @@ class ToMetaDataTest(fixtures.TestBase, ComparesTables):
             'mytable.myid = othertable.myid')
 
 
+class InfoTest(fixtures.TestBase):
+    def test_metadata_info(self):
+        m1 = MetaData()
+        eq_(m1.info, {})
+
+        m1 = MetaData(info={"foo": "bar"})
+        eq_(m1.info, {"foo": "bar"})
+
+    def test_foreignkey_constraint_info(self):
+        fkc = ForeignKeyConstraint(['a'], ['b'], name='bar')
+        eq_(fkc.info, {})
+
+        fkc = ForeignKeyConstraint(
+            ['a'], ['b'], name='bar', info={"foo": "bar"})
+        eq_(fkc.info, {"foo": "bar"})
+
+    def test_foreignkey_info(self):
+        fkc = ForeignKey('a')
+        eq_(fkc.info, {})
+
+        fkc = ForeignKey('a', info={"foo": "bar"})
+        eq_(fkc.info, {"foo": "bar"})
+
+    def test_primarykey_constraint_info(self):
+        pkc = PrimaryKeyConstraint('a', name='x')
+        eq_(pkc.info, {})
+
+        pkc = PrimaryKeyConstraint('a', name='x', info={'foo': 'bar'})
+        eq_(pkc.info, {'foo': 'bar'})
+
+    def test_unique_constraint_info(self):
+        uc = UniqueConstraint('a', name='x')
+        eq_(uc.info, {})
+
+        uc = UniqueConstraint('a', name='x', info={'foo': 'bar'})
+        eq_(uc.info, {'foo': 'bar'})
+
+    def test_check_constraint_info(self):
+        cc = CheckConstraint('foo=bar', name='x')
+        eq_(cc.info, {})
+
+        cc = CheckConstraint('foo=bar', name='x', info={'foo': 'bar'})
+        eq_(cc.info, {'foo': 'bar'})
+
+    def test_index_info(self):
+        ix = Index('x', 'a')
+        eq_(ix.info, {})
+
+        ix = Index('x', 'a', info={'foo': 'bar'})
+        eq_(ix.info, {'foo': 'bar'})
+
+    def test_column_info(self):
+        c = Column('x', Integer)
+        eq_(c.info, {})
+
+        c = Column('x', Integer, info={'foo': 'bar'})
+        eq_(c.info, {'foo': 'bar'})
+
+    def test_table_info(self):
+        t = Table('x', MetaData())
+        eq_(t.info, {})
+
+        t = Table('x', MetaData(), info={'foo': 'bar'})
+        eq_(t.info, {'foo': 'bar'})
+
+
 class TableTest(fixtures.TestBase, AssertsCompiledSQL):
 
+    @testing.requires.temporary_tables
     @testing.skip_if('mssql', 'different col format')
     def test_prefixes(self):
         from sqlalchemy import Table
@@ -1269,6 +1475,46 @@ class SchemaTypeTest(fixtures.TestBase):
         self.MyType(metadata=m1)
 
         m1.create_all(testing.db)
+
+    def test_boolean_constraint_type_doesnt_double(self):
+        m1 = MetaData()
+
+        t1 = Table('x', m1, Column("flag", Boolean()))
+        eq_(
+            len([
+                c for c in t1.constraints
+                if isinstance(c, CheckConstraint)]),
+            1
+        )
+        m2 = MetaData()
+        t2 = t1.tometadata(m2)
+
+        eq_(
+            len([
+                c for c in t2.constraints
+                if isinstance(c, CheckConstraint)]),
+            1
+        )
+
+    def test_enum_constraint_type_doesnt_double(self):
+        m1 = MetaData()
+
+        t1 = Table('x', m1, Column("flag", Enum('a', 'b', 'c')))
+        eq_(
+            len([
+                c for c in t1.constraints
+                if isinstance(c, CheckConstraint)]),
+            1
+        )
+        m2 = MetaData()
+        t2 = t1.tometadata(m2)
+
+        eq_(
+            len([
+                c for c in t2.constraints
+                if isinstance(c, CheckConstraint)]),
+            1
+        )
 
 
 class SchemaTest(fixtures.TestBase, AssertsCompiledSQL):
@@ -2045,7 +2291,7 @@ class ColumnDefinitionTest(AssertsCompiledSQL, fixtures.TestBase):
 
         assert_raises_message(
             exc.ArgumentError,
-            "Column object already assigned to Table 't'",
+            "Column object 'x' already assigned to Table 't'",
             Table, 'q', MetaData(), c)
 
     def test_incomplete_key(self):
@@ -2626,7 +2872,7 @@ class DialectKWArgTest(fixtures.TestBase):
                         lambda arg: "goofy_%s" % arg):
             with self._fixture():
                 idx = Index('a', 'b')
-                idx.kwargs[u'participating_x'] = 7
+                idx.kwargs[util.u('participating_x')] = 7
 
                 eq_(
                     list(idx.dialect_kwargs),
