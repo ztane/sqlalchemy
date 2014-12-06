@@ -893,6 +893,8 @@ class BindParameter(ColumnElement):
 
     _is_crud = False
 
+    _lexical_freeze = False
+
     def __init__(self, key, value=NO_ARG, type_=None,
                  unique=False, required=NO_ARG,
                  quote=None, callable_=None,
@@ -1165,7 +1167,7 @@ class BindParameter(ColumnElement):
 
     def _clone(self):
         c = ClauseElement._clone(self)
-        if self.unique:
+        if self.unique and not self._lexical_freeze:
             c.key = _anonymous_label('%%(%d %s)s' % (id(c), c._orig_key
                                                      or 'param'))
         return c
@@ -1175,10 +1177,6 @@ class BindParameter(ColumnElement):
             self.unique = True
             self.key = _anonymous_label(
                 '%%(%d %s)s' % (id(self), self._orig_key or 'param'))
-
-    def _convert_to_non_anon(self):
-        self.unique = False
-        self.key = re.sub(r'[% \(\)]+', '_', self._identifying_key)
 
     def compare(self, other, **kw):
         """Compare this :class:`BindParameter` to the given

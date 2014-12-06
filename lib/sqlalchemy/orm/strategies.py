@@ -401,45 +401,54 @@ class LazyLoader(AbstractRelationshipLoader):
             active_history=active_history
         )
 
-    def _simple_lazy_clause(self, state, passive):
+    @util.memoized_property
+    def _baked_lazy_clause(self):
         criterion, bind_to_col, rev = (
             self._lazywhere,
             self._bind_to_col,
             self._equated_columns
         )
 
+        params = []
+
+        def visit_bindparam(bindparam):
+            bindparam._lexical_freeze = True
+            if bindparam._identifying_key in bind_to_col:
+                params.append((
+                    bindparam.key, bind_to_col[bindparam._identifying_key],
+                    None))
+            else:
+                params.append((bindparam.key, None, bindparam.value))
+
+        criterion = visitors.cloned_traverse(
+            criterion, {}, {'bindparam': visit_bindparam}
+        )
+
+        return criterion, params
+
+    def _simple_lazy_clause(self, state, passive):
+        criterion, param_keys = self._baked_lazy_clause
+
         if state is None:
-            return sql_util.adapt_criterion_to_null(criterion, bind_to_col)
+            return sql_util.adapt_criterion_to_null(
+                criterion, [key for key, ident, value in param_keys])
 
         mapper = self.parent_property.parent
 
         o = state.obj()  # strong ref
         dict_ = attributes.instance_dict(o)
 
-        # use the "committed state" only if we're in a flush
-        # for this state.
-
         params = {}
-
-        def visit_bindparam(bindparam):
-            bindparam._convert_to_non_anon()
-            if bindparam._identifying_key in bind_to_col:
+        for key, ident, value in param_keys:
+            if ident is not None:
                 if passive and passive & attributes.LOAD_AGAINST_COMMITTED:
                     value = mapper._get_committed_state_attr_by_column(
-                        state, dict_,
-                        bind_to_col[bindparam._identifying_key])
+                        state, dict_, ident)
                 else:
                     value = mapper._get_state_attr_by_column(
-                        state, dict_,
-                        bind_to_col[bindparam._identifying_key])
-            else:
-                value = bindparam.value
+                        state, dict_, ident)
 
-            params[bindparam.key] = value
-
-        criterion = visitors.cloned_traverse(
-            criterion, {}, {'bindparam': visit_bindparam}
-        )
+            params[key] = value
 
         return criterion, params
 
@@ -588,51 +597,33 @@ class LazyLoader(AbstractRelationshipLoader):
             for pk in self.mapper.primary_key
         ]
 
-    @util.dependencies(
-        "sqlalchemy.ext.baked",
-        "sqlalchemy.orm.strategy_options")
+    @util.dependencies("sqlalchemy.orm.strategy_options")
     def _emit_lazyload(
-        self, baked, strategy_options, session, state,
-            ident_key, passive):
+            self, strategy_options, session, state, ident_key, passive):
 
-        q = baked.BakedQuery(
-            lambda: session.query(self.mapper),
-            bakery=self.mapper._compiled_cache)
-        q.bake(
-            lambda q: q._adapt_all_clauses()._with_invoke_all_eagers(False),
-            self.parent_property)
-
-        if not self.parent_property.bake_queries:
-            q.spoil()
-
+        q = session.query(self.mapper)._adapt_all_clauses()
         if self.parent_property.secondary is not None:
-            q.bake(
-                lambda q:
-                q.select_from(self.mapper, self.parent_property.secondary))
+            q = q.select_from(self.mapper, self.parent_property.secondary)
+
+        q = q._with_invoke_all_eagers(False)
 
         pending = not state.key
 
         # don't autoflush on pending
         if pending or passive & attributes.NO_AUTOFLUSH:
-            q.bake(lambda q: q.autoflush(False))
+            q = q.autoflush(False)
 
         if state.load_path:
-            q.spoil()
-            q.bake(
-                lambda q:
-                q._with_current_path(state.load_path[self.parent_property]))
+            q = q._with_current_path(state.load_path[self.parent_property])
 
         if state.load_options:
-            q.spoil()
-            q.bake(lambda q: q._conditional_options(*state.load_options))
+            q = q._conditional_options(*state.load_options)
 
         if self.use_get:
-            return loading._load_on_ident_from_baked(q, ident_key)
+            return loading.load_on_ident(q, ident_key)
 
         if self.parent_property.order_by:
-            q.bake(
-                lambda q:
-                q.order_by(*util.to_list(self.parent_property.order_by)))
+            q = q.order_by(*util.to_list(self.parent_property.order_by))
 
         for rev in self.parent_property._reverse_property:
             # reverse props that are MANYTOONE are loading *this*
@@ -640,19 +631,15 @@ class LazyLoader(AbstractRelationshipLoader):
             if rev.direction is interfaces.MANYTOONE and \
                 rev._use_get and \
                     not isinstance(rev.strategy, LazyLoader):
-                q.bake(
-                    lambda q:
-                    q.options(
-                        strategy_options.Load(rev.parent).lazyload(rev.key)))
+                q = q.options(
+                    strategy_options.Load(rev.parent).lazyload(rev.key))
 
         lazy_clause, params = self._simple_lazy_clause(state, passive=passive)
 
-        if pending:
-            if orm_util._none_set.intersection(set(params)):
-                return None
+        if pending and orm_util._none_set.intersection(params.values()):
+            return None
 
-        q.bake(lambda q: q.filter(lazy_clause))
-        q.params(**params)
+        q = q.filter(lazy_clause).params(params)
 
         result = q.all()
         if self.uselist:
@@ -713,7 +700,7 @@ class LoadLazyAttribute(object):
         key = self.key
         instance_mapper = state.manager.mapper
         prop = instance_mapper._props[key]
-        strategy = prop._strategies[LazyLoader]
+        strategy = prop._strategies[(('lazy', 'select'),)]
 
         return strategy._load_for_state(state, passive)
 
