@@ -1,5 +1,6 @@
 from ..orm.query import QueryContext, Query
 
+
 class BakedQuery(object):
     """an object that can produce a 'baked' Query, that is one where
     its ultimately generated SQL string is cached based on how the query
@@ -22,8 +23,9 @@ class BakedQuery(object):
             self._bakery = bakery
 
     def _update_cache_key(self, fn, args=()):
-        self._cache_key += (fn.func_code.co_filename,
-                                    fn.func_code.co_firstlineno) + args
+        self._cache_key += (
+            fn.func_code.co_filename,
+            fn.func_code.co_firstlineno) + args
 
     @classmethod
     def baked(cls, fn):
@@ -49,7 +51,6 @@ class BakedQuery(object):
         """
         self._spoiled = True
         return self
-
 
     def _bake_subquery_loaders(self, context):
         context.attributes['baked_queries'] = baked_queries = []
