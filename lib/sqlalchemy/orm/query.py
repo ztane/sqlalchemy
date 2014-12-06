@@ -826,7 +826,9 @@ class Query(object):
         :return: The object instance, or ``None``.
 
         """
+        return self._get_impl(ident, loading.load_on_ident)
 
+    def _get_impl(self, ident, fallback_fn):
         # convert composite types to individual args
         if hasattr(ident, '__composite_values__'):
             ident = ident.__composite_values__()
@@ -857,7 +859,7 @@ class Query(object):
                     return None
                 return instance
 
-        return loading.load_on_ident(self, key)
+        return fallback_fn(self, key)
 
     @_generative()
     def correlate(self, *args):

@@ -402,7 +402,7 @@ class LazyLoader(AbstractRelationshipLoader):
         )
 
     @util.memoized_property
-    def _baked_lazy_clause(self):
+    def _simple_lazy_clause(self):
         criterion, bind_to_col, rev = (
             self._lazywhere,
             self._bind_to_col,
@@ -412,7 +412,7 @@ class LazyLoader(AbstractRelationshipLoader):
         params = []
 
         def visit_bindparam(bindparam):
-            bindparam._lexical_freeze = True
+            bindparam.unique = False
             if bindparam._identifying_key in bind_to_col:
                 params.append((
                     bindparam.key, bind_to_col[bindparam._identifying_key],
@@ -426,8 +426,8 @@ class LazyLoader(AbstractRelationshipLoader):
 
         return criterion, params
 
-    def _simple_lazy_clause(self, state, passive):
-        criterion, param_keys = self._baked_lazy_clause
+    def _generate_lazy_clause(self, state, passive):
+        criterion, param_keys = self._simple_lazy_clause
 
         if state is None:
             return sql_util.adapt_criterion_to_null(
@@ -451,78 +451,6 @@ class LazyLoader(AbstractRelationshipLoader):
             params[key] = value
 
         return criterion, params
-
-    def lazy_clause(
-        self, state, reverse_direction=False,
-        alias_secondary=False,
-            adapt_source=None, passive=None):
-        if state is None:
-            return self._lazy_none_clause(
-                reverse_direction,
-                adapt_source=adapt_source)
-
-        if not reverse_direction:
-            criterion, bind_to_col = \
-                self._lazywhere, \
-                self._bind_to_col
-        else:
-            criterion, bind_to_col = \
-                self._rev_lazywhere, \
-                self._rev_bind_to_col
-
-        if reverse_direction:
-            mapper = self.parent_property.mapper
-        else:
-            mapper = self.parent_property.parent
-
-        o = state.obj()  # strong ref
-        dict_ = attributes.instance_dict(o)
-
-        # use the "committed state" only if we're in a flush
-        # for this state.
-
-        if passive and passive & attributes.LOAD_AGAINST_COMMITTED:
-            def visit_bindparam(bindparam):
-                if bindparam._identifying_key in bind_to_col:
-                    bindparam.callable = \
-                        lambda: mapper._get_committed_state_attr_by_column(
-                            state, dict_,
-                            bind_to_col[bindparam._identifying_key])
-        else:
-            def visit_bindparam(bindparam):
-                if bindparam._identifying_key in bind_to_col:
-                    bindparam.callable = \
-                        lambda: mapper._get_state_attr_by_column(
-                            state, dict_,
-                            bind_to_col[bindparam._identifying_key])
-
-        if self.parent_property.secondary is not None and alias_secondary:
-            criterion = sql_util.ClauseAdapter(
-                self.parent_property.secondary.alias()).\
-                traverse(criterion)
-
-        criterion = visitors.cloned_traverse(
-            criterion, {}, {'bindparam': visit_bindparam})
-
-        if adapt_source:
-            criterion = adapt_source(criterion)
-        return criterion
-
-    def _lazy_none_clause(self, reverse_direction=False, adapt_source=None):
-        if not reverse_direction:
-            criterion, bind_to_col = \
-                self._lazywhere, \
-                self._bind_to_col
-        else:
-            criterion, bind_to_col = \
-                self._rev_lazywhere, \
-                self._rev_bind_to_col
-
-        criterion = sql_util.adapt_criterion_to_null(criterion, bind_to_col)
-
-        if adapt_source:
-            criterion = adapt_source(criterion)
-        return criterion
 
     def _load_for_state(self, state, passive):
         if not state.key and (
@@ -634,7 +562,8 @@ class LazyLoader(AbstractRelationshipLoader):
                 q = q.options(
                     strategy_options.Load(rev.parent).lazyload(rev.key))
 
-        lazy_clause, params = self._simple_lazy_clause(state, passive=passive)
+        lazy_clause, params = self._generate_lazy_clause(
+            state, passive=passive)
 
         if pending and orm_util._none_set.intersection(params.values()):
             return None

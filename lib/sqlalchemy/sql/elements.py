@@ -893,8 +893,6 @@ class BindParameter(ColumnElement):
 
     _is_crud = False
 
-    _lexical_freeze = False
-
     def __init__(self, key, value=NO_ARG, type_=None,
                  unique=False, required=NO_ARG,
                  quote=None, callable_=None,
@@ -1167,7 +1165,7 @@ class BindParameter(ColumnElement):
 
     def _clone(self):
         c = ClauseElement._clone(self)
-        if self.unique and not self._lexical_freeze:
+        if self.unique:
             c.key = _anonymous_label('%%(%d %s)s' % (id(c), c._orig_key
                                                      or 'param'))
         return c

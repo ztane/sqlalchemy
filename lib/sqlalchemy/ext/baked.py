@@ -1,9 +1,14 @@
 from ..orm.query import QueryContext, Query
 from ..orm import strategies, attributes, properties, \
-    strategy_options, util as orm_util, interfaces, loading
-from .. import log
-from ..sql import util as sql_util, visitors
+    strategy_options, util as orm_util, interfaces
+from .. import log as sqla_log
+from ..sql import util as sql_util
+from ..orm import exc as orm_exc
 from .. import util
+
+import logging
+
+log = logging.getLogger(__name__)
 
 
 class BakedQuery(object):
@@ -26,6 +31,15 @@ class BakedQuery(object):
         self.steps = []
         if bakery is not None:
             self._bakery = bakery
+
+    def _clone(self):
+        b1 = BakedQuery.__new__(BakedQuery)
+        b1.query = self.query
+        b1._cache_key = self._cache_key
+        b1.steps = list(self.steps)
+        b1._bakery = self._bakery
+        b1._params = dict(self._params)
+        return b1
 
     def _update_cache_key(self, fn, args=()):
         self._cache_key += (
@@ -76,6 +90,7 @@ class BakedQuery(object):
             context.attributes[k] = bk
 
     def _bake(self):
+        log.debug("baking")
         query = self.as_query(params=False)
         context = query._compile_context()
         self._bake_subquery_loaders(context)
@@ -121,8 +136,72 @@ class BakedQuery(object):
             query.session._autoflush()
         return query.params(self._params)._execute_and_instances(context)
 
+    def first(self):
+        baked = self._clone()
+        baked.bake(lambda q: q.slice(0, 1))
+        ret = list(baked)
+        if len(ret) > 0:
+            return ret[0]
+        else:
+            return None
+
     def all(self):
         return list(self)
+
+    def get(self, ident):
+        return self.as_query()._get_impl(ident, self._load_on_ident)
+
+    def _load_on_ident(self, query, key):
+        """Load the given identity key from the database."""
+
+        ident = key[1]
+
+        baked = self._clone()
+
+        mapper = query._mapper_zero()
+
+        _get_clause, _get_params = mapper._get_clause
+
+        def setup(query):
+            _lcl_get_clause = _get_clause
+            q = query._clone()
+            q._get_condition()
+            q._order_by = None
+
+            # None present in ident - turn those comparisons
+            # into "IS NULL"
+            if None in ident:
+                nones = set([
+                    _get_params[col].key for col, value in
+                    zip(mapper.primary_key, ident) if value is None
+                ])
+                _lcl_get_clause = sql_util.adapt_criterion_to_null(
+                    _lcl_get_clause, nones)
+
+            _lcl_get_clause = q._adapt_clause(_lcl_get_clause, True, False)
+            q._criterion = _lcl_get_clause
+            return q
+
+        # cache the query against a key that includes
+        # which positions in the primary key are NULL
+        # (remember, we can map to an OUTER JOIN)
+        baked.bake(setup, tuple(elem is None for elem in ident))
+
+        params = dict([
+            (_get_params[primary_key].key, id_val)
+            for id_val, primary_key in zip(ident, mapper.primary_key)
+        ])
+
+        baked.params(**params)
+
+        result = self.all()
+        l = len(result)
+        if l > 1:
+            raise orm_exc.MultipleResultsFound()
+        elif l:
+            return result[0]
+        else:
+            return None
 
 
 def bake_lazy_loaders():
@@ -139,7 +218,7 @@ def unbake_lazy_loaders():
         lazy=True)(strategies.LazyLoader)
 
 
-@log.class_logger
+@sqla_log.class_logger
 @properties.RelationshipProperty.strategy_for(lazy="baked_select")
 class BakedLazyLoader(strategies.LazyLoader):
 
@@ -177,7 +256,7 @@ class BakedLazyLoader(strategies.LazyLoader):
             q.bake(lambda q: q._conditional_options(*state.load_options))
 
         if self.use_get:
-            return loading._load_on_ident_from_baked(q, ident_key)
+            return q._load_on_ident(q.query, ident_key)
 
         if self.parent_property.order_by:
             q.bake(
@@ -195,7 +274,7 @@ class BakedLazyLoader(strategies.LazyLoader):
                     q.options(
                         strategy_options.Load(rev.parent).lazyload(rev.key)))
 
-        lazy_clause, params = self._simple_lazy_clause(state, passive=passive)
+        lazy_clause, params = self._generate_lazy_clause(state, passive)
 
         if pending:
             if orm_util._none_set.intersection(params.values()):
@@ -219,4 +298,3 @@ class BakedLazyLoader(strategies.LazyLoader):
                 return result[0]
             else:
                 return None
-

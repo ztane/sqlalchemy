@@ -23,7 +23,7 @@ from . import attributes
 from ..sql.util import (
     ClauseAdapter,
     join_condition, _shallow_annotate, visit_binary_product,
-    _deep_deannotate, selectables_overlap
+    _deep_deannotate, selectables_overlap, adapt_criterion_to_null
 )
 from ..sql import operators, expression, visitors
 from .interfaces import (MANYTOMANY, MANYTOONE, ONETOMANY,
@@ -1324,16 +1324,69 @@ class RelationshipProperty(StrategizedProperty):
         return self._optimized_compare(
             instance, value_is_parent=True, alias_secondary=alias_secondary)
 
-    def _optimized_compare(self, value, value_is_parent=False,
+    def _optimized_compare(self, state, value_is_parent=False,
                            adapt_source=None,
                            alias_secondary=True):
-        if value is not None:
-            value = attributes.instance_state(value)
-        return self._lazy_strategy.lazy_clause(
-            value,
-            reverse_direction=not value_is_parent,
-            alias_secondary=alias_secondary,
-            adapt_source=adapt_source)
+        if state is not None:
+            state = attributes.instance_state(state)
+
+        reverse_direction = not value_is_parent
+
+        if state is None:
+            return self._lazy_none_clause(
+                reverse_direction,
+                adapt_source=adapt_source)
+
+        if not reverse_direction:
+            criterion, bind_to_col = \
+                self._lazy_strategy._lazywhere, \
+                self._lazy_strategy._bind_to_col
+        else:
+            criterion, bind_to_col = \
+                self._lazy_strategy._rev_lazywhere, \
+                self._lazy_strategy._rev_bind_to_col
+
+        if reverse_direction:
+            mapper = self.mapper
+        else:
+            mapper = self.parent
+
+        dict_ = attributes.instance_dict(state.obj())
+
+        def visit_bindparam(bindparam):
+            if bindparam._identifying_key in bind_to_col:
+                bindparam.callable = \
+                    lambda: mapper._get_state_attr_by_column(
+                        state, dict_,
+                        bind_to_col[bindparam._identifying_key])
+
+        if self.secondary is not None and alias_secondary:
+            criterion = ClauseAdapter(
+                self.secondary.alias()).\
+                traverse(criterion)
+
+        criterion = visitors.cloned_traverse(
+            criterion, {}, {'bindparam': visit_bindparam})
+
+        if adapt_source:
+            criterion = adapt_source(criterion)
+        return criterion
+
+    def _lazy_none_clause(self, reverse_direction=False, adapt_source=None):
+        if not reverse_direction:
+            criterion, bind_to_col = \
+                self._lazy_strategy._lazywhere, \
+                self._lazy_strategy._bind_to_col
+        else:
+            criterion, bind_to_col = \
+                self._lazy_strategy._rev_lazywhere, \
+                self._lazy_strategy._rev_bind_to_col
+
+        criterion = adapt_criterion_to_null(criterion, bind_to_col)
+
+        if adapt_source:
+            criterion = adapt_source(criterion)
+        return criterion
 
     def __str__(self):
         return str(self.parent.class_.__name__) + "." + self.key
