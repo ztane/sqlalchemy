@@ -9,7 +9,7 @@ as well as automated persistence of Python objects, proceed first to the
 tutorial.
 
 .. toctree::
-    :maxdepth: 3
+    :maxdepth: 2
 
     tutorial
     mapper_config

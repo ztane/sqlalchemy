@@ -34,6 +34,7 @@ in creating real schema generation scripts.
 
 .. toctree::
     :maxdepth: 1
+    :hidden:
 
     metadata
     reflection

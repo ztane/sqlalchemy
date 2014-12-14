@@ -3,17 +3,20 @@ from __future__ import absolute_import
 from sphinx.application import TemplateBridge
 from sphinx.jinja2glue import BuiltinTemplateLoader
 from mako.lookup import TemplateLookup
+from .toc import TOCMixin
 import os
 
 rtd = os.environ.get('READTHEDOCS', None) == 'True'
 
-class MakoBridge(TemplateBridge):
+class MakoBridge(TOCMixin, TemplateBridge):
     def init(self, builder, *args, **kw):
         self.jinja2_fallback = BuiltinTemplateLoader()
         self.jinja2_fallback.init(builder, *args, **kw)
 
         builder.config.html_context['release_date'] = builder.config['release_date']
         builder.config.html_context['site_base'] = builder.config['site_base']
+
+        self.app = builder.app
 
         self.lookup = TemplateLookup(directories=builder.config.templates_path,
             #format_exceptions=True,
@@ -40,15 +43,15 @@ class MakoBridge(TemplateBridge):
         template = template.replace(".html", ".mako")
         context['prevtopic'] = context.pop('prev', None)
         context['nexttopic'] = context.pop('next', None)
-
+        context['app'] = self.app
         # local docs layout
         context['rtd'] = False
         context['toolbar'] = False
         context['base'] = "static_base.mako"
-
+        context['current_subtoc'] = lambda: self.get_current_subtoc(
+            context['current_page_name'])
         # override context attributes
         self.setup_ctx(context)
-
         context.setdefault('_', lambda x: x)
         return self.lookup.get_template(template).render_unicode(**context)
 
