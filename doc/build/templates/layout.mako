@@ -177,13 +177,7 @@ withsidebar = bool(toc) and current_page_name != 'index'
                 ${title}
             </%block>
         </a></h3>
-        <%
-            if title == 'Schema Definition Language':
-                import pdb
-                pdb.set_trace()
-        %>
-        ${toctree()}
-        ${toc}
+        ${sub_files()}
 
         % if rtd:
         <h4>Project Versions</h4>
