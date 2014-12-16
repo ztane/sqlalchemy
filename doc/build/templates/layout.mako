@@ -174,10 +174,24 @@ withsidebar = bool(toc) and current_page_name != 'index'
 
         <h3><a href="#">\
             <%block name="show_title">
-                ${title}
+                % if parents:
+                    ${parents[-1]['title']}
+                % else:
+                    ${title}
+                % endif
             </%block>
         </a></h3>
-        ${sub_files()}
+
+        <%
+            #if title == 'Schema Definition Language':
+            #    import pdb
+            #    pdb.set_trace()
+        %>
+        % if parents:
+            ${parent_toc(current_page_name, title)}
+        % else:
+            ${toc}
+        % endif
 
         % if rtd:
         <h4>Project Versions</h4>

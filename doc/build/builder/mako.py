@@ -48,8 +48,8 @@ class MakoBridge(TOCMixin, TemplateBridge):
         context['rtd'] = False
         context['toolbar'] = False
         context['base'] = "static_base.mako"
-        context['sub_files'] = lambda: self.get_current_subtoc(
-            context['current_page_name'])
+        context['parent_toc'] = self.get_current_subtoc
+        context['bridge'] = self
         # override context attributes
         self.setup_ctx(context)
         context.setdefault('_', lambda x: x)
