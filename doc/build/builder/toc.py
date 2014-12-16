@@ -47,23 +47,20 @@ class TOCMixin(object):
                         remainders, level + 1, outer):
                         yield ent
 
-        import pdb
-        pdb.set_trace()
         def _organize_nodes(nodes):
-            current_level = -1
-
-            stack = [[]]
-
+            stack = []
+            levels = []
             for level, refuri, name in nodes:
-
-                if level > current_level:
+                if not levels or levels[-1] < level:
+                    levels.append(level)
                     new_collection = []
-                    stack[-1].append(new_collection)
+                    if stack:
+                        stack[-1].append(new_collection)
                     stack.append(new_collection)
-                    current_level = level
-                elif level < current_level:
-                    stack.pop(-1)
-                    current_level = level
+                elif level < levels[-1]:
+                    while levels and level < levels[-1]:
+                        stack.pop(-1)
+                        levels.pop(-1)
 
                 stack[-1].append((refuri, name))
             return stack
