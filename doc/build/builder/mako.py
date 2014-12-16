@@ -25,16 +25,23 @@ class MakoBridge(TOCMixin, TemplateBridge):
             ]
         )
 
-        if rtd:
-            # RTD layout, imported from sqlalchemy.org
+        if rtd and builder.config['site_base']:
             import urllib2
-            template = urllib2.urlopen(builder.config['site_base'] + "/docs_adapter.mako").read()
-            self.lookup.put_string("docs_adapter.mako", template)
+            if builder_config['site_adapter_file']:
+                # remote site layout / startup files
+                template_name = builder_config['site_adapter_template']
 
-            setup_ctx = urllib2.urlopen(builder.config['site_base'] + "/docs_adapter.py").read()
-            lcls = {}
-            exec(setup_ctx, lcls)
-            self.setup_ctx = lcls['setup_context']
+                template = urllib2.urlopen(
+                    builder.config['site_base'] + "/" + template_name).read()
+                self.lookup.put_string(template_name, template)
+
+            py_name = builder_config['site_adapter_py']
+            if py_name:
+                setup_ctx = urllib2.urlopen(
+                    builder.config['site_base'] + "/", py_name).read()
+                lcls = {}
+                exec(setup_ctx, lcls)
+                self.setup_ctx = lcls['setup_context']
 
     def setup_ctx(self, context):
         pass
@@ -64,5 +71,7 @@ def setup(app):
     app.config['template_bridge'] = "builder.mako.MakoBridge"
     app.add_config_value('release_date', "", 'env')
     app.add_config_value('site_base', "", 'env')
+    app.add_config_value('site_adapter_template', "", 'env')
+    app.add_config_value('site_adapter_py', "", 'env')
     app.add_config_value('build_number', "", 'env')
 

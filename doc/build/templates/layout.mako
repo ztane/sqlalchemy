@@ -172,7 +172,7 @@ withsidebar = bool(toc) and current_page_name != 'index'
 
         <div id="docs-sidebar">
 
-        <h3><a href="#">\
+        <h3><a href="${parents[-1]['link'] if parents else '#'}">\
             <%block name="show_title">
                 % if parents:
                     ${parents[-1]['title']}
@@ -182,11 +182,6 @@ withsidebar = bool(toc) and current_page_name != 'index'
             </%block>
         </a></h3>
 
-        <%
-            #if title == 'Schema Definition Language':
-            #    import pdb
-            #    pdb.set_trace()
-        %>
         % if parents:
             ${parent_toc(current_page_name, title)}
         % else:

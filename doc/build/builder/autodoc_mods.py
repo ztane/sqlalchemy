@@ -10,27 +10,11 @@ def autodoc_skip_member(app, what, name, obj, skip, options):
         return skip
 
 
-_convert_modname = {
-    "sqlalchemy.sql.sqltypes": "sqlalchemy.types",
-    "sqlalchemy.sql.type_api": "sqlalchemy.types",
-    "sqlalchemy.sql.schema": "sqlalchemy.schema",
-    "sqlalchemy.sql.elements": "sqlalchemy.sql.expression",
-    "sqlalchemy.sql.selectable": "sqlalchemy.sql.expression",
-    "sqlalchemy.sql.dml": "sqlalchemy.sql.expression",
-    "sqlalchemy.sql.ddl": "sqlalchemy.schema",
-    "sqlalchemy.sql.base": "sqlalchemy.sql.expression"
-}
-
-_convert_modname_w_class = {
-    ("sqlalchemy.engine.interfaces", "Connectable"): "sqlalchemy.engine",
-    ("sqlalchemy.sql.base", "DialectKWArgs"): "sqlalchemy.sql.base",
-}
-
-def _adjust_rendered_mod_name(modname, objname):
-    if (modname, objname) in _convert_modname_w_class:
-        return _convert_modname_w_class[(modname, objname)]
-    elif modname in _convert_modname:
-        return _convert_modname[modname]
+def _adjust_rendered_mod_name(config, modname, objname):
+    if (modname, objname) in config.autodocmods_convert_modname_w_class:
+        return config.autodocmods_convert_modname_w_class[(modname, objname)]
+    elif modname in config.autodocmods_convert_modname:
+        return config.autodocmods_convert_modname[modname]
     else:
         return modname
 
@@ -49,7 +33,8 @@ def autodoc_process_docstring(app, what, name, obj, options, lines):
         for base in obj.__bases__:
             if base is not object:
                 bases.append(":class:`%s.%s`" % (
-                        _adjust_rendered_mod_name(base.__module__, base.__name__),
+                        _adjust_rendered_mod_name(
+                            app.env.config, base.__module__, base.__name__),
                         base.__name__))
 
         if bases:
@@ -70,19 +55,28 @@ def autodoc_process_docstring(app, what, name, obj, options, lines):
                     if attrname in supercls.__dict__:
                         break
                 if supercls is not cls:
-                    _inherited_names.add("%s.%s" % (supercls.__module__, supercls.__name__))
-                    _inherited_names.add("%s.%s.%s" % (supercls.__module__, supercls.__name__, attrname))
+                    _inherited_names.add(
+                        "%s.%s" % (supercls.__module__, supercls.__name__))
+                    _inherited_names.add(
+                        "%s.%s.%s" %
+                        (supercls.__module__, supercls.__name__, attrname))
                     lines[:0] = [
                         ".. container:: inherited_member",
                         "",
-                        "    *inherited from the* :%s:`~%s.%s.%s` *%s of* :class:`~%s.%s`" % (
+                        "    *inherited from the* "
+                        ":%s:`~%s.%s.%s` *%s of* :class:`~%s.%s`" % (
                                     "attr" if what == "attribute"
                                     else "meth",
-                                    _adjust_rendered_mod_name(supercls.__module__, supercls.__name__),
+                                    _adjust_rendered_mod_name(
+                                        app.env.config,
+                                        supercls.__module__,
+                                        supercls.__name__),
                                     supercls.__name__,
                                     attrname,
                                     what,
-                                    _adjust_rendered_mod_name(supercls.__module__, supercls.__name__),
+                                    _adjust_rendered_mod_name(app.env.config,
+                                        supercls.__module__,
+                                        supercls.__name__),
                                     supercls.__name__
                                 ),
                         ""
@@ -98,5 +92,7 @@ def missing_reference(app, env, node, contnode):
 def setup(app):
     app.connect('autodoc-skip-member', autodoc_skip_member)
     app.connect('autodoc-process-docstring', autodoc_process_docstring)
+    app.add_config_value("autodocmods_convert_modname", {}, 'env')
+    app.add_config_value("autodocmods_convert_modname_w_class", {}, 'env')
 
     app.connect('missing-reference', missing_reference)

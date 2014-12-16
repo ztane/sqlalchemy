@@ -41,6 +41,7 @@ extensions = [
                 'builder.mako',
                 'builder.sqlformatter',
                 'builder.viewsource',
+                'builder.scss'
             ]
 
 # Add any paths that contain templates here, relative to this directory.
@@ -74,6 +75,21 @@ changelog_render_pullreq = {
 
 changelog_render_changeset = "http://www.sqlalchemy.org/trac/changeset/%s"
 
+autodocmods_convert_modname = {
+    "sqlalchemy.sql.sqltypes": "sqlalchemy.types",
+    "sqlalchemy.sql.type_api": "sqlalchemy.types",
+    "sqlalchemy.sql.schema": "sqlalchemy.schema",
+    "sqlalchemy.sql.elements": "sqlalchemy.sql.expression",
+    "sqlalchemy.sql.selectable": "sqlalchemy.sql.expression",
+    "sqlalchemy.sql.dml": "sqlalchemy.sql.expression",
+    "sqlalchemy.sql.ddl": "sqlalchemy.schema",
+    "sqlalchemy.sql.base": "sqlalchemy.sql.expression"
+}
+
+autodocmods_convert_modname_w_class = {
+    ("sqlalchemy.engine.interfaces", "Connectable"): "sqlalchemy.engine",
+    ("sqlalchemy.sql.base", "DialectKWArgs"): "sqlalchemy.sql.base",
+}
 
 # The encoding of source files.
 #source_encoding = 'utf-8-sig'
@@ -97,6 +113,8 @@ release = "1.0.0"
 release_date = "Not released"
 
 site_base = os.environ.get("RTD_SITE_BASE", "http://www.sqlalchemy.org")
+site_adapter_template = "docs_adapter.mako"
+site_adapter_py = "docs_adapter.py"
 
 # arbitrary number recognized by builders.py, incrementing this
 # will force a rebuild

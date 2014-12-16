@@ -30,7 +30,8 @@ class DialectDirective(Directive):
         try:
             dialect_directive = self._dialects[dialect_name]
         except KeyError:
-            raise Exception("No .. dialect:: %s directive has been established"
+            raise Exception(
+                "No .. dialect:: %s directive has been established"
                                     % dialect_name)
 
         output = []
@@ -64,7 +65,8 @@ class DialectDirective(Directive):
                     ids=["dialect-%s-%s-url" % (dialect_name, dbapi_name)]
             )
             if "url" in content:
-                text = "Documentation and download information (if applicable) "\
+                text = "Documentation and download information "\
+                        "(if applicable) "\
                         "for %s is available at:\n" % content["name"]
                 uri = content['url']
                 sec.append(
@@ -82,7 +84,8 @@ class DialectDirective(Directive):
                     nodes.paragraph('', '',
                         nodes.Text(text, text),
                         nodes.reference('', '',
-                            nodes.Text(content['driverurl'], content['driverurl']),
+                            nodes.Text(content['driverurl'],
+                                content['driverurl']),
                             refuri=content['driverurl']
                         )
                     )
@@ -113,7 +116,8 @@ class DialectDirective(Directive):
 
         self.bullets = nodes.bullet_list()
         text = "The following dialect/DBAPI options are available.  "\
-                "Please refer to individual DBAPI sections for connect information."
+                "Please refer to individual DBAPI sections "\
+                "for connect information."
         sec = nodes.section('',
                 nodes.paragraph('', '',
                     nodes.Text(
@@ -135,7 +139,8 @@ class DialectDirective(Directive):
         env = self.state.document.settings.env
         dialect_directive = self._dialects[dialect_name]
         try:
-            relative_uri = env.app.builder.get_relative_uri(dialect_directive.docname, self.docname) 
+            relative_uri = env.app.builder.get_relative_uri(
+                dialect_directive.docname, self.docname)
         except:
             relative_uri = ""
         list_node = nodes.list_item('',

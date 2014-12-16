@@ -1,11 +1,23 @@
+$primary-font-family: Verdana, sans-serif;
+$header-font-family: Helvetica, Arial, sans-serif;
+$top-header-font-family: Tahoma,Geneva,sans-serif;
+$primary-background-color: #FDFBFC;
+$topmost-header-color: #EBEBEE;
+$popout-color: #FBFBEE;
+$sidebar-color: #EFEFEF;
+$sidebar-header-background-color: #DDDDDD;
+$sidebar-header-color: #222222;
+$notebox-background-color: #EEFFEF;
+$border-style: 1px solid #CCC;
+
 /* global */
 
 .body-background {
-  background-color: #FDFBFC;
+  background-color: $primary-background-color;
 }
 
 body {
-  background-color: #FDFBFC;
+  background-color: $primary-background-color;
   margin:0 38px;
   color:#333333;
 }
@@ -22,12 +34,10 @@ form {
 /* hyperlinks */
 
 a:link, a:visited, a:active {
-    /*color:#0000FF;*/
     color: #990000;
 }
 a:hover {
     color: #FF0000;
-    /*color:#700000;*/
     text-decoration:underline;
 }
 
@@ -72,26 +82,28 @@ a.headerlink:hover {
 
 /* header/footer elements */
 
-#docs-header h1 {
-    font-size:20px;
-    color: #222222;
-    margin: 0;
-    padding: 0;
-}
-
 #docs-header {
-  font-family:Verdana,sans-serif;
+  font-family: $primary-font-family;
 
   font-size:.9em;
   position: relative;
+
+  h1 {
+    font-size: 20px;
+    color: #222222;
+    margin: 4px 0px;
+    padding: 5px 5px;
+    background-color: $topmost-header-color;
+    border: $border-style;
+  }
 }
 
 #docs-sidebar-popout,
 #docs-bottom-navigation,
 #index-nav {
-  font-family: Verdana, sans-serif;
-  background-color: #FBFBEE;
-  border: solid 1px #CCC;
+  font-family: $primary-font-family;
+  background-color: $popout-color;
+  border: $border-style;
   font-size:.8em;
 }
 
@@ -116,12 +128,12 @@ a.headerlink:hover {
 
 #docs-version-header {
   position: absolute;
-  right: 0;
-  bottom: 0;
+  right: 8px;
+  bottom: 8px;
 }
 
 .docs-navigation-links {
-  font-family:Verdana,sans-serif;
+  font-family: $primary-font-family;
 }
 
 #docs-bottom-navigation {
@@ -137,7 +149,7 @@ a.headerlink:hover {
 #docs-header h1,
 #docs-top-navigation h1,
 #docs-top-navigation h2 {
-  font-family:Tahoma,Geneva,sans-serif;
+  font-family: $top-header-font-family;
   font-weight:normal;
 }
 
@@ -178,10 +190,7 @@ a.headerlink:hover {
 #docs-sidebar,
 #index-nav
  {
-  /*font-family: helvetica, arial, sans-serif;
-  font-size:.9em;*/
-
-  font-family: Verdana, sans-serif;
+  font-family: $primary-font-family;
   font-size:.85em;
   line-height:1.5em;
 
@@ -222,10 +231,10 @@ a.headerlink:hover {
 #docs-sidebar {
   font-size:.85em;
 
-  border: solid 1px #CCC;
+  border: $border-style;
 
   z-index: 3;
-  background-color: #EFEFEF;
+  background-color: $sidebar-color;
 }
 
 #index-nav {
@@ -302,9 +311,9 @@ a.headerlink:hover {
 
 
 #docs-sidebar h3, #docs-sidebar h4 {
-    background-color: #DDDDDD;
-    color: #222222;
-    font-family: Verdana,sans-serif;
+    background-color: $sidebar-header-background-color;
+    color: $sidebar-header-color;
+    font-family: $primary-font-family;
     font-size: 1.1em;
     font-weight: normal;
     margin: 10px 0 0 -15px;
@@ -318,7 +327,7 @@ a.headerlink:hover {
 }
 
 #docs-sidebar h3 a, #docs-sidebar h4 a {
-  color: #222222;
+  color: $sidebar-header-color;
 }
 #docs-sidebar ul {
   margin: 10px 10px 10px 0px;
@@ -341,7 +350,7 @@ a.headerlink:hover {
   background-color:#FFFFFF;
   padding:1px 10px 10px 10px;
 
-  border: solid 1px #CCC;
+  border: $border-style;
   margin-top:10px;
 }
 
@@ -354,7 +363,7 @@ a.headerlink:hover {
 #docs-body h2,
 #docs-body h3,
 #docs-body h4 {
-  font-family:Helvetica, Arial, sans-serif;
+  font-family: $header-font-family;
 }
 
 #docs-body #sqlalchemy-documentation h1 {
@@ -395,7 +404,7 @@ a.headerlink:hover {
 
 #docs-container pre {
   background-color: #f0f0f0;
-  border: solid 1px #ccc;
+  border: $border-style;
   box-shadow: 2px 2px 3px #DFDFDF;
   padding:10px;
   margin: 5px 0px 5px 0px;
@@ -405,7 +414,7 @@ a.headerlink:hover {
 
 .popup_sql, .show_sql
 {
-    background-color: #FBFBEE;
+    background-color: $popout-color;
     padding:5px 10px;
     margin:10px -5px;
     border:1px dashed;
@@ -415,7 +424,7 @@ a.headerlink:hover {
 #docs-container .sql_link
 {
   font-weight:normal;
-  font-family: arial, sans-serif;
+  font-family: helvetica, arial, sans-serif;
   font-size:.9em;
   text-transform: uppercase;
   color:#990000;
@@ -458,7 +467,7 @@ div.section {
 }
 
 div.note, div.warning, p.deprecated, div.topic, div.admonition  {
-    background-color:#EEFFEF;
+    background-color:$notebox-background-color;
 }
 
 .footnote {
@@ -474,7 +483,7 @@ div.faq ul {
 }
 
 div.admonition, div.topic, .deprecated, .versionadded, .versionchanged {
-    border:1px solid #CCCCCC;
+    border: $border-style;
     padding:5px 10px;
     font-size:.9em;
     margin-top:5px;
@@ -511,7 +520,7 @@ p.sidebar-title {
 
 
 div.inherited-member {
-    border:1px solid #CCCCCC;
+    border: $border-style;
     padding:5px 5px;
     font-size:.9em;
     box-shadow: 2px 2px 3px #DFDFDF;
@@ -652,22 +661,3 @@ div .version-warning {
   background:#FFBBBB;
 }
 
-/*div .event-signatures {
-  background-color:#F0F0FD;
-  padding:0 10px;
-  border:1px solid #BFBFBF;
-}*/
-
-/*dl div.floatything {
-    display:none;
-    position:fixed;
-    top:25px;
-    left:40px;
-    font-size:.95em;
-    font-weight: bold;
-    border:1px solid;
-    background-color: #FFF;
-}
-dl:hover div.floatything {
-    display:block;
-}*/
