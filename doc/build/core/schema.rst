@@ -34,35 +34,10 @@ in creating real schema generation scripts.
 
 .. toctree::
     :maxdepth: 1
-    :hidden:
 
     metadata
     reflection
     defaults
     constraints
     ddl
-
-Doing the FrobNozzle
---------------------
-
-asfjnads kjdsndkajsnf adskj fnds
-
-
-Frobisher Blap Blap
--------------------
-
-askljfnasdkfjdnfdsak
-
-The thingy
-^^^^^^^^^^^^
-thingy thiny
-
-Wrapping Up
--------------
-askjfnasdkfjdfkjdan dsljfnasdfknjads fds
-
-
-
-
-
 

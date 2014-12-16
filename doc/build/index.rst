@@ -13,7 +13,7 @@ A high level view and getting set up.
 
 :doc:`Overview <intro>` |
 :ref:`Installation Guide <installation>` |
-:doc:`Frequently Asked Questions <faq>` |
+:doc:`Frequently Asked Questions <faq/index>` |
 :doc:`Migration from 0.9 <changelog/migration_10>` |
 :doc:`Glossary <glossary>` |
 :doc:`Changelog catalog <changelog/index>`
