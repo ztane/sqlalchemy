@@ -1,3 +1,4 @@
+==================
 MetaData / Schema
 ==================
 
@@ -9,7 +10,7 @@ MetaData / Schema
 
 
 My program is hanging when I say ``table.drop()`` / ``metadata.drop_all()``
-----------------------------------------------------------------------------
+===========================================================================
 
 This usually corresponds to two conditions: 1. using PostgreSQL, which is really
 strict about table locks, and 2. you have a connection still open which
@@ -44,7 +45,8 @@ The solution is to close out all connections before emitting DROP TABLE::
     mytable.drop(engine)
 
 Does SQLAlchemy support ALTER TABLE, CREATE VIEW, CREATE TRIGGER, Schema Upgrade Functionality?
------------------------------------------------------------------------------------------------
+===============================================================================================
+
 
 General ALTER support isn't present in SQLAlchemy directly.  For special DDL
 on an ad-hoc basis, the :class:`.DDL` and related constructs can be used.
@@ -54,7 +56,7 @@ A more comprehensive option is to use schema migration tools, such as Alembic
 or SQLAlchemy-Migrate; see :ref:`schema_migrations` for discussion on this.
 
 How can I sort Table objects in order of their dependency?
------------------------------------------------------------
+===========================================================================
 
 This is available via the :attr:`.MetaData.sorted_tables` function::
 
@@ -65,7 +67,7 @@ This is available via the :attr:`.MetaData.sorted_tables` function::
         print t
 
 How can I get the CREATE TABLE/ DROP TABLE output as a string?
----------------------------------------------------------------
+===========================================================================
 
 Modern SQLAlchemy has clause constructs which represent DDL operations. These
 can be rendered to strings like any other SQL expression::
@@ -90,7 +92,7 @@ The `Alembic <https://bitbucket.org/zzzeek/alembic>`_ tool also supports
 an "offline" SQL generation mode that renders database migrations as SQL scripts.
 
 How can I subclass Table/Column to provide certain behaviors/configurations?
-------------------------------------------------------------------------------
+=============================================================================
 
 :class:`.Table` and :class:`.Column` are not good targets for direct subclassing.
 However, there are simple ways to get on-construction behaviors using creation
