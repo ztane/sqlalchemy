@@ -14,7 +14,7 @@ know how to construct and use rudimentary mappers and relationships.
     :maxdepth: 2
 
     classical
-    mapping_columns
+    scalar_mapping
     inheritance
     nonstandard_mappings
     versioning

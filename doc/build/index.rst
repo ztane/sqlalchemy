@@ -34,7 +34,7 @@ of Python objects, proceed first to the tutorial.
   :doc:`Relationship Configuration <orm/relationships>` |
 
 * **Configuration Extensions:**
-  :doc:`Declarative Extension <orm/extensions/declarative>` |
+  :doc:`Declarative Extension <orm/extensions/declarative/index>` |
   :doc:`Association Proxy <orm/extensions/associationproxy>` |
   :doc:`Hybrid Attributes <orm/extensions/hybrid>` |
   :doc:`Automap <orm/extensions/automap>` |

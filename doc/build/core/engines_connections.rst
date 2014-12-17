@@ -8,3 +8,4 @@ Engine and Connection Use
 	engines
 	connections
 	pooling
+	events

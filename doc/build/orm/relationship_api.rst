@@ -1,3 +1,4 @@
+.. automodule:: sqlalchemy.orm
 
 Relationships API
 -----------------

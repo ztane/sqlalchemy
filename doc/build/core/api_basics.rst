@@ -5,7 +5,7 @@ Core API Basics
 .. toctree::
     :maxdepth: 2
 
-    events
+    event
     inspection
     interfaces
     exceptions

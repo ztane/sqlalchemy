@@ -19,4 +19,5 @@ of collections via :func:`relationship`.
     join_conditions
     collections
     relationship_persistence
+    relationship_api
 
