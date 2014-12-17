@@ -14,13 +14,8 @@ tutorial.
     tutorial
     mapper_config
     relationships
-    collections
-    inheritance
+    loading_objects
     session
-    query
-    loading
-    events
+    extending
     extensions/index
     examples
-    exceptions
-    internals

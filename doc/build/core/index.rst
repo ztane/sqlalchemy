@@ -14,14 +14,6 @@ Language provides a schema-centric usage paradigm.
     tutorial
     expression_api
     schema
-    engines
-    connections
-    pooling
-    event
-    events
-    compiler
-    inspection
-    serializer
-    interfaces
-    exceptions
-    internals
+    types
+    engines_connections
+    api_basics
