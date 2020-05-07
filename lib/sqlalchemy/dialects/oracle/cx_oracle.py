@@ -1009,6 +1009,11 @@ class OracleDialect_cx_oracle(OracleDialect):
                         outconverter=lambda value: outconverter(value.read()),
                     )
                 else:
+                    if dialect.auto_convert_lobs == 'inline':
+                        return cursor.var(
+                            cx_Oracle.LONG_STRING,
+                            arraysize=cursor.arraysize
+                        )
                     return cursor.var(
                         default_type,
                         size,
